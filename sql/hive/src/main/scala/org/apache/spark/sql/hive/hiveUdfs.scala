@@ -331,12 +331,12 @@ private[hive] case class HiveUdafFunction(
   private val buffer =
     function.getNewAggregationBuffer.asInstanceOf[GenericUDAFEvaluator.AbstractAggregationBuffer]
 
-  override def eval(input: Row): Any = unwrapData(function.evaluate(buffer), returnInspector)
+  override def terminate: Any = unwrapData(function.evaluate(buffer), returnInspector)
 
   @transient
   val inputProjection = new InterpretedProjection(exprs)
 
-  def update(input: Row): Unit = {
+  override def iterate(input: Row): Unit = {
     val inputs = inputProjection(input).asInstanceOf[Seq[AnyRef]].toArray
     function.iterate(buffer, inputs)
   }

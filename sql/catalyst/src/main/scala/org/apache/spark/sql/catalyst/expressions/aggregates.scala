@@ -69,22 +69,15 @@ abstract class PartialAggregate extends AggregateExpression {
  * A specific implementation of an aggregate function. Used to wrap a generic
  * [[AggregateExpression]] with an algorithm that will be used to compute one specific result.
  */
-abstract class AggregateFunction
-  extends AggregateExpression with Serializable with trees.LeafNode[Expression] {
+abstract class AggregateFunction extends Serializable {
   self: Product =>
-
-  override type EvaluatedType = Any
 
   /** Base should return the generic aggregate expression that this function is computing */
   val base: AggregateExpression
-  override def references = base.references
-  override def nullable = base.nullable
-  override def dataType = base.dataType
 
-  def update(input: Row): Unit
+  def iterate(input: Row): Unit
 
-  // Do we really need this?
-  override def newInstance() = makeCopy(productIterator.map { case a: AnyRef => a }.toArray)
+  def terminate: Any = ???
 }
 
 case class Min(child: Expression) extends PartialAggregate with trees.UnaryNode[Expression] {
@@ -106,7 +99,7 @@ case class MinFunction(expr: Expression, base: AggregateExpression) extends Aggr
 
   var currentMin: Any = _
 
-  override def update(input: Row): Unit = {
+  override def iterate(input: Row): Unit = {
     if (currentMin == null) {
       currentMin = expr.eval(input)
     } else if(GreaterThan(Literal(currentMin, expr.dataType), expr).eval(input) == true) {
@@ -114,7 +107,7 @@ case class MinFunction(expr: Expression, base: AggregateExpression) extends Aggr
     }
   }
 
-  override def eval(input: Row): Any = currentMin
+  override def terminate: Any = currentMin
 }
 
 case class Max(child: Expression) extends PartialAggregate with trees.UnaryNode[Expression] {
@@ -136,7 +129,7 @@ case class MaxFunction(expr: Expression, base: AggregateExpression) extends Aggr
 
   var currentMax: Any = _
 
-  override def update(input: Row): Unit = {
+  override def iterate(input: Row): Unit = {
     if (currentMax == null) {
       currentMax = expr.eval(input)
     } else if(LessThan(Literal(currentMax, expr.dataType), expr).eval(input) == true) {
@@ -144,7 +137,7 @@ case class MaxFunction(expr: Expression, base: AggregateExpression) extends Aggr
     }
   }
 
-  override def eval(input: Row): Any = currentMax
+  override def terminate: Any = currentMax
 }
 
 case class Count(child: Expression) extends PartialAggregate with trees.UnaryNode[Expression] {
@@ -282,10 +275,9 @@ case class AverageFunction(expr: Expression, base: AggregateExpression)
 
   private def addFunction(value: Any) = Add(sum, Literal(value))
 
-  override def eval(input: Row): Any =
-    sumAsDouble.eval(EmptyRow).asInstanceOf[Double] / count.toDouble
+  override def terminate: Any = sumAsDouble.eval(EmptyRow).asInstanceOf[Double] / count.toDouble
 
-  override def update(input: Row): Unit = {
+  override def iterate(input: Row): Unit = {
     val evaluatedExpr = expr.eval(input)
     if (evaluatedExpr != null) {
       count += 1
@@ -299,14 +291,14 @@ case class CountFunction(expr: Expression, base: AggregateExpression) extends Ag
 
   var count: Long = _
 
-  override def update(input: Row): Unit = {
+  override def iterate(input: Row): Unit = {
     val evaluatedExpr = expr.eval(input)
     if (evaluatedExpr != null) {
       count += 1L
     }
   }
 
-  override def eval(input: Row): Any = count
+  override def terminate: Any = count
 }
 
 case class ApproxCountDistinctPartitionFunction(
@@ -318,14 +310,14 @@ case class ApproxCountDistinctPartitionFunction(
 
   private val hyperLogLog = new HyperLogLog(relativeSD)
 
-  override def update(input: Row): Unit = {
+  override def iterate(input: Row): Unit = {
     val evaluatedExpr = expr.eval(input)
     if (evaluatedExpr != null) {
       hyperLogLog.offer(evaluatedExpr)
     }
   }
 
-  override def eval(input: Row): Any = hyperLogLog
+  override def terminate: Any = hyperLogLog
 }
 
 case class ApproxCountDistinctMergeFunction(
@@ -337,12 +329,12 @@ case class ApproxCountDistinctMergeFunction(
 
   private val hyperLogLog = new HyperLogLog(relativeSD)
 
-  override def update(input: Row): Unit = {
+  override def iterate(input: Row): Unit = {
     val evaluatedExpr = expr.eval(input)
     hyperLogLog.addAll(evaluatedExpr.asInstanceOf[HyperLogLog])
   }
 
-  override def eval(input: Row): Any = hyperLogLog.cardinality()
+  override def terminate: Any = hyperLogLog.cardinality()
 }
 
 case class SumFunction(expr: Expression, base: AggregateExpression) extends AggregateFunction {
@@ -354,11 +346,11 @@ case class SumFunction(expr: Expression, base: AggregateExpression) extends Aggr
 
   private val addFunction = Add(sum, Coalesce(Seq(expr, zero)))
 
-  override def update(input: Row): Unit = {
+  override def iterate(input: Row): Unit = {
     sum.update(addFunction, input)
   }
 
-  override def eval(input: Row): Any = sum.eval(null)
+  override def terminate: Any = sum.eval(null)
 }
 
 case class SumDistinctFunction(expr: Expression, base: AggregateExpression)
@@ -368,14 +360,14 @@ case class SumDistinctFunction(expr: Expression, base: AggregateExpression)
 
   private val seen = new scala.collection.mutable.HashSet[Any]()
 
-  override def update(input: Row): Unit = {
+  override def iterate(input: Row): Unit = {
     val evaluatedExpr = expr.eval(input)
     if (evaluatedExpr != null) {
       seen += evaluatedExpr
     }
   }
 
-  override def eval(input: Row): Any =
+  override def terminate: Any =
     seen.reduceLeft(base.dataType.asInstanceOf[NumericType].numeric.asInstanceOf[Numeric[Any]].plus)
 }
 
@@ -386,14 +378,14 @@ case class CountDistinctFunction(expr: Seq[Expression], base: AggregateExpressio
 
   val seen = new scala.collection.mutable.HashSet[Any]()
 
-  override def update(input: Row): Unit = {
+  override def iterate(input: Row): Unit = {
     val evaluatedExpr = expr.map(_.eval(input))
     if (evaluatedExpr.map(_ != null).reduceLeft(_ && _)) {
       seen += evaluatedExpr
     }
   }
 
-  override def eval(input: Row): Any = seen.size.toLong
+  override def terminate: Any = seen.size.toLong
 }
 
 case class FirstFunction(expr: Expression, base: AggregateExpression) extends AggregateFunction {
@@ -401,11 +393,11 @@ case class FirstFunction(expr: Expression, base: AggregateExpression) extends Ag
 
   var result: Any = null
 
-  override def update(input: Row): Unit = {
+  override def iterate(input: Row): Unit = {
     if (result == null) {
       result = expr.eval(input)
     }
   }
 
-  override def eval(input: Row): Any = result
+  override def terminate: Any = result
 }
