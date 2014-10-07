@@ -42,6 +42,14 @@ object Row {
    * This method can be used to construct a [[Row]] from a [[Seq]] of values.
    */
   def fromSeq(values: Seq[Any]): Row = new GenericRow(values.toArray)
+
+  /**
+   * This method can be used to construct a [[MutableRow]] from a [[Row]]
+   */
+  def toMutableRow(row: Row): MutableRow = row match {
+    case x: MutableRow => x
+    case other: Row => new GenericMutableRow(other.toArray)
+  }
 }
 
 /**
@@ -215,9 +223,11 @@ class GenericRow(protected[sql] val values: Array[Any]) extends Row {
   def copy() = this
 }
 
-class GenericMutableRow(size: Int) extends GenericRow(size) with MutableRow {
+class GenericMutableRow(v: Array[Any]) extends GenericRow(v) with MutableRow {
   /** No-arg constructor for serialization. */
-  def this() = this(0)
+  def this() = this(null)
+
+  def this(size: Int) = this(new Array[Any](size))
 
   override def setBoolean(ordinal: Int, value: Boolean): Unit = { values(ordinal) = value }
   override def setByte(ordinal: Int, value: Byte): Unit = { values(ordinal) = value }

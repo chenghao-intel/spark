@@ -204,7 +204,7 @@ object NullPropagation extends Rule[LogicalPlan] {
     case q: LogicalPlan => q transformExpressionsUp {
       case e @ Count(Literal(null, _)) => Cast(Literal(0L), e.dataType)
       case e @ Sum(Literal(c, _)) if c == 0 => Cast(Literal(0L), e.dataType)
-      case e @ Average(Literal(c, _)) if c == 0 => Literal(0.0, e.dataType)
+      case e @ Average(Literal(c, _), _) if c == 0 => Literal(0.0, e.dataType)
       case e @ IsNull(c) if !c.nullable => Literal(false, BooleanType)
       case e @ IsNotNull(c) if !c.nullable => Literal(true, BooleanType)
       case e @ GetItem(Literal(null, _), _) => Literal(null, e.dataType)
@@ -539,9 +539,9 @@ object DecimalAggregates extends Rule[LogicalPlan] {
     case Sum(e @ DecimalType.Expression(prec, scale)) if prec + 10 <= MAX_LONG_DIGITS =>
       MakeDecimal(Sum(UnscaledValue(e)), prec + 10, scale)
 
-    case Average(e @ DecimalType.Expression(prec, scale)) if prec + 4 <= MAX_DOUBLE_DIGITS =>
+    case Average(e @ DecimalType.Expression(prec, scale), distinct) if prec + 4 <= MAX_DOUBLE_DIGITS =>
       Cast(
-        Divide(Average(UnscaledValue(e)), Literal(math.pow(10.0, scale), DoubleType)),
+        Divide(Average(UnscaledValue(e), distinct), Literal(math.pow(10.0, scale), DoubleType)),
         DecimalType(prec + 4, scale + 4))
   }
 }

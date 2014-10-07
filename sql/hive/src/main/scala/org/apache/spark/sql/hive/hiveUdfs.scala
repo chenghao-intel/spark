@@ -187,6 +187,9 @@ private[hive] case class HiveGenericUdf(functionClassName: String, children: Seq
   }
 }
 
+/////////////////////////////////////////////////////////
+// TODO need to reimplemented with latest UDAF interface
+////////////////////////////////////////////////////////
 private[hive] case class HiveGenericUdaf(
     functionClassName: String,
     children: Seq[Expression]) extends AggregateExpression
@@ -209,7 +212,8 @@ private[hive] case class HiveGenericUdaf(
 
   def dataType: DataType = inspectorToDataType(objectInspector)
 
-  def nullable: Boolean = true
+  override def nullable: Boolean = true
+  override def distinct: Boolean = false
 
   override def toString = s"$nodeName#$functionClassName(${children.mkString(",")})"
 
@@ -217,6 +221,9 @@ private[hive] case class HiveGenericUdaf(
 }
 
 /** It is used as a wrapper for the hive functions which uses UDAF interface */
+/////////////////////////////////////////////////////////
+// TODO need to reimplemented with latest UDAF interface
+////////////////////////////////////////////////////////
 private[hive] case class HiveUdaf(
     functionClassName: String,
     children: Seq[Expression]) extends AggregateExpression
@@ -239,8 +246,8 @@ private[hive] case class HiveUdaf(
 
   def dataType: DataType = inspectorToDataType(objectInspector)
 
-  def nullable: Boolean = true
-
+  override def nullable: Boolean = true
+  override def distinct: Boolean = false
   override def toString = s"$nodeName#$functionClassName(${children.mkString(",")})"
 
   def newInstance() =
@@ -353,7 +360,7 @@ private[hive] case class HiveUdafFunction(
   private val buffer =
     function.getNewAggregationBuffer.asInstanceOf[GenericUDAFEvaluator.AbstractAggregationBuffer]
 
-  override def eval(input: Row): Any = unwrap(function.evaluate(buffer), returnInspector)
+  // override def eval(input: Row): Any = unwrap(function.evaluate(buffer), returnInspector)
 
   @transient
   val inputProjection = new InterpretedProjection(exprs)

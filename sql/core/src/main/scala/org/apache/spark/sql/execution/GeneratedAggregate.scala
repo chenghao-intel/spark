@@ -101,7 +101,7 @@ case class GeneratedAggregate(
 
         AggregateEvaluation(currentSum :: Nil, initialValue :: Nil, updateFunction :: Nil, result)
 
-      case a @ Average(expr) =>
+      case a @ Average(expr, distinct) =>
         val currentCount = AttributeReference("currentCount", LongType, nullable = false)()
         val currentSum = AttributeReference("currentSum", expr.dataType, nullable = false)()
         val initialCount = Literal(0L)

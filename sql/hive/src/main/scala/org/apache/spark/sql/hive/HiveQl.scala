@@ -911,14 +911,18 @@ private[hive] object HiveQl {
       Star(Some(name))
 
     /* Aggregate Functions */
+    case Token("TOK_FUNCTIONSTAR", Token(COUNT(), Nil) :: Nil) => Count(Literal(1))
     case Token("TOK_FUNCTION", Token(AVG(), Nil) :: arg :: Nil) => Average(nodeToExpr(arg))
     case Token("TOK_FUNCTION", Token(COUNT(), Nil) :: arg :: Nil) => Count(nodeToExpr(arg))
-    case Token("TOK_FUNCTIONSTAR", Token(COUNT(), Nil) :: Nil) => Count(Literal(1))
-    case Token("TOK_FUNCTIONDI", Token(COUNT(), Nil) :: args) => CountDistinct(args.map(nodeToExpr))
     case Token("TOK_FUNCTION", Token(SUM(), Nil) :: arg :: Nil) => Sum(nodeToExpr(arg))
-    case Token("TOK_FUNCTIONDI", Token(SUM(), Nil) :: arg :: Nil) => SumDistinct(nodeToExpr(arg))
     case Token("TOK_FUNCTION", Token(MAX(), Nil) :: arg :: Nil) => Max(nodeToExpr(arg))
     case Token("TOK_FUNCTION", Token(MIN(), Nil) :: arg :: Nil) => Min(nodeToExpr(arg))
+    /* Distinct Aggregate Functions */
+    case Token("TOK_FUNCTIONDI", Token(AVG(), Nil) :: arg :: Nil) => Average(nodeToExpr(arg), true)
+    case Token("TOK_FUNCTIONDI", Token(COUNT(), Nil) :: arg :: Nil) => Count(nodeToExpr(arg))
+    case Token("TOK_FUNCTIONDI", Token(SUM(), Nil) :: arg :: Nil) => Sum(nodeToExpr(arg))
+    case Token("TOK_FUNCTIONDI", Token(MAX(), Nil) :: arg :: Nil) => Max(nodeToExpr(arg))
+    case Token("TOK_FUNCTIONDI", Token(MIN(), Nil) :: arg :: Nil) => Min(nodeToExpr(arg), true)
 
     /* System functions about string operations */
     case Token("TOK_FUNCTION", Token(UPPER(), Nil) :: arg :: Nil) => Upper(nodeToExpr(arg))

@@ -125,47 +125,35 @@ object PartialAggregation {
 
   def unapply(plan: LogicalPlan): Option[ReturnType] = plan match {
     case logical.Aggregate(groupingExpressions, aggregateExpressions, child) =>
-      // Collect all aggregate expressions.
+      // Collect all aggregate expressions that can be computed partially.
       val allAggregates =
         aggregateExpressions.flatMap(_ collect { case a: AggregateExpression => a})
-      // Collect all aggregate expressions that can be computed partially.
-      val partialAggregates =
-        aggregateExpressions.flatMap(_ collect { case p: PartialAggregate => p})
 
       // Only do partial aggregation if supported by all aggregate expressions.
-      if (allAggregates.size == partialAggregates.size) {
-        // Create a map of expressions to their partial evaluations for all aggregate expressions.
-        val partialEvaluations: Map[TreeNodeRef, SplitEvaluation] =
-          partialAggregates.map(a => (new TreeNodeRef(a), a.asPartial)).toMap
-
+      if (!allAggregates.exists(_.distinct)) {
         // We need to pass all grouping expressions though so the grouping can happen a second
         // time. However some of them might be unnamed so we alias them allowing them to be
         // referenced in the second aggregation.
-        val namedGroupingExpressions: Map[Expression, NamedExpression] = groupingExpressions.map {
+        val namedGroupingExpressions = groupingExpressions.map {
           case n: NamedExpression => (n, n)
           case other => (other, Alias(other, "PartialGroup")())
-        }.toMap
+        }
+        val substitutions = namedGroupingExpressions.toMap
 
         // Replace aggregations with a new expression that computes the result from the already
         // computed partial evaluations and grouping values.
         val rewrittenAggregateExpressions = aggregateExpressions.map(_.transformUp {
-          case e: Expression if partialEvaluations.contains(new TreeNodeRef(e)) =>
-            partialEvaluations(new TreeNodeRef(e)).finalEvaluation
-          case e: Expression if namedGroupingExpressions.contains(e) =>
-            namedGroupingExpressions(e).toAttribute
+          case e: Expression if substitutions.contains(e) =>
+            substitutions(e).toAttribute
         }).asInstanceOf[Seq[NamedExpression]]
 
-        val partialComputation =
-          (namedGroupingExpressions.values ++
-            partialEvaluations.values.flatMap(_.partialEvaluations)).toSeq
-
-        val namedGroupingAttributes = namedGroupingExpressions.values.map(_.toAttribute).toSeq
+        val namedGroupingAttributes = namedGroupingExpressions.map(_._2.toAttribute)
 
         Some(
           (namedGroupingAttributes,
            rewrittenAggregateExpressions,
            groupingExpressions,
-           partialComputation,
+           aggregateExpressions,
            child))
       } else {
         None
@@ -173,7 +161,6 @@ object PartialAggregation {
     case _ => None
   }
 }
-
 
 /**
  * A pattern that finds joins with equality conditions that can be evaluated using equi-join.

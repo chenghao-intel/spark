@@ -209,10 +209,10 @@ class RangePartitioner[K : Ordering : ClassTag, V](
     sfactory match {
       case js: JavaSerializer => out.defaultWriteObject()
       case _ =>
-        out.writeBoolean(ascending)
+
+      out.writeBoolean(ascending)
         out.writeObject(ordering)
         out.writeObject(binarySearch)
-
         val ser = sfactory.newInstance()
         Utils.serializeViaNestedStream(out, ser) { stream =>
           stream.writeObject(scala.reflect.classTag[Array[K]])

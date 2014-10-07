@@ -76,6 +76,19 @@ case class UnresolvedFunction(name: String, children: Seq[Expression]) extends E
   override def toString = s"'$name(${children.mkString(",")})"
 }
 
+case class DistinctFunction(child: Expression) extends UnaryExpression {
+  override def dataType = throw new UnresolvedException(this, "dataType")
+  override def foldable = throw new UnresolvedException(this, "foldable")
+  override def nullable = throw new UnresolvedException(this, "nullable")
+  override lazy val resolved = false
+
+  // distinct function are transient at compile time.
+  override def eval(input: Row = null): EvaluatedType =
+    throw new TreeNodeException(this, s"No function to evaluate expression. type: ${this.nodeName}")
+
+  override def toString = s"DISTINCT($child)"
+}
+
 /**
  * Represents all of the input attributes to a given relational operator, for example in
  * "SELECT * FROM ...".

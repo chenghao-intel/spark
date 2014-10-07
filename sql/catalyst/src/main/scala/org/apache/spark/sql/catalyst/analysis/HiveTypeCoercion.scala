@@ -272,8 +272,8 @@ trait HiveTypeCoercion {
 
       case Sum(e) if e.dataType == StringType =>
         Sum(Cast(e, DoubleType))
-      case Average(e) if e.dataType == StringType =>
-        Average(Cast(e, DoubleType))
+      case Average(e, distinct) if e.dataType == StringType =>
+        Average(Cast(e, DoubleType), distinct)
       case Sqrt(e) if e.dataType == StringType =>
         Sqrt(Cast(e, DoubleType))
     }
@@ -478,15 +478,15 @@ trait HiveTypeCoercion {
       case SumDistinct(e @ FractionalType()) if e.dataType != DoubleType =>
         SumDistinct(Cast(e, DoubleType))
 
-      case s @ Average(e @ DecimalType()) => s // Decimal is already the biggest.
-      case Average(e @ IntegralType()) if e.dataType != LongType =>
-        Average(Cast(e, LongType))
-      case Average(e @ FractionalType()) if e.dataType != DoubleType =>
-        Average(Cast(e, DoubleType))
+      case s @ Average(e @ DecimalType(), _) => s // Decimal is already the biggest.
+      case Average(e @ IntegralType(), distinct) if e.dataType != LongType =>
+        Average(Cast(e, LongType), distinct)
+      case Average(e @ FractionalType(), distinct) if e.dataType != DoubleType =>
+        Average(Cast(e, DoubleType), distinct)
 
       // Hive lets you do aggregation of timestamps... for some reason
       case Sum(e @ TimestampType()) => Sum(Cast(e, DoubleType))
-      case Average(e @ TimestampType()) => Average(Cast(e, DoubleType))
+      case Average(e @ TimestampType(), distinct) => Average(Cast(e, DoubleType), distinct)
     }
   }
 
