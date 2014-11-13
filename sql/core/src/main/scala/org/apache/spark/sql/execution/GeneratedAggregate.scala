@@ -108,7 +108,7 @@ case class GeneratedAggregate(
 
         AggregateEvaluation(currentSum :: Nil, initialValue :: Nil, updateFunction :: Nil, result)
 
-      case a @ Average(expr) =>
+      case a @ Average(expr, distinct) =>
         val calcType =
           expr.dataType match {
             case DecimalType.Fixed(_, _) =>
