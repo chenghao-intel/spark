@@ -43,7 +43,10 @@ private[hive] abstract class HiveFunctionRegistry
 
   def getFunctionInfo(name: String) = FunctionRegistry.getFunctionInfo(name)
 
-  def lookupFunction(name: String, children: Seq[Expression]): Expression = {
+  def lookupFunction(
+      name: String,
+      children: Seq[Expression],
+      distinct: Boolean = false): Expression = {
     // We only look it up to see if it exists, but do not include it in the HiveUDF since it is
     // not always serializable.
     val functionInfo: FunctionInfo =
@@ -56,9 +59,8 @@ private[hive] abstract class HiveFunctionRegistry
       HiveSimpleUdf(new HiveFunctionWrapper(functionClassName), children)
     } else if (classOf[GenericUDF].isAssignableFrom(functionInfo.getFunctionClass)) {
       HiveGenericUdf(new HiveFunctionWrapper(functionClassName), children)
-    } else if (
-         classOf[AbstractGenericUDAFResolver].isAssignableFrom(functionInfo.getFunctionClass)) {
-      HiveGenericUdaf(new HiveFunctionWrapper(functionClassName), children, false)
+    } else if (functionInfo.getGenericUDAFResolver != null) {
+      HiveGenericUdaf(new HiveFunctionWrapper(functionClassName), children, distinct)
     } else if (classOf[GenericUDTF].isAssignableFrom(functionInfo.getFunctionClass)) {
       HiveGenericUdtf(new HiveFunctionWrapper(functionClassName), Nil, children)
     } else {
@@ -186,43 +188,49 @@ private[hive] case class HiveGenericUdaf(
   with HiveInspectors {
   type UDFType = AbstractGenericUDAFResolver
 
+  // Hive UDAF evaluator
   def evaluator = resolver.getEvaluator(children.map(_.dataType.toTypeInfo).toArray)
 
   @transient
   protected lazy val resolver: AbstractGenericUDAFResolver = funcWrapper.createFunction()
 
+  // Output data object inspector
   @transient
   lazy val objectInspector = evaluator.init(GenericUDAFEvaluator.Mode.COMPLETE, inspectors)
 
+  // Input arguments object inspectors
+  @transient
+  lazy val inspectors = children.map(toInspector).toArray
+
+  // Output data type
+  override def dataType: DataType = inspectorToDataType(objectInspector)
+
+  // Aggregation Buffer Inspector
   @transient
   lazy val bufferObjectInspector = evaluator.init(GenericUDAFEvaluator.Mode.PARTIAL1, inspectors)
 
   @transient
-  lazy val inspectors = children.map(_.dataType).map(toInspector).toArray
-
-  @transient
   override val distinctLike: Boolean = {
-    val annotation = evaluator.getClass().getAnnotation(classOf[org.apache.hadoop.hive.ql.udf.UDFType])
+    val annotation = evaluator.getClass().getAnnotation(classOf[HiveUDFType])
     if (annotation == null || !annotation.distinctLike()) false else true
   }
 
-  override def dataType: DataType = inspectorToDataType(objectInspector)
-
-  override def nullable: Boolean = true
-
-  override def newInstance(buffers: Seq[BoundReference]): AggregateFunction = new HiveUdafFunction(buffers(0), funcWrapper, this)
-
+  // Aggregation Buffer Data Type, We assume only 1 element for the Hive Aggregation Buffer
+  // It will be StructType if more than 1 element (Actually will be StructSettableObjectInspector)
   override def bufferDataType: Seq[DataType] = inspectorToDataType(bufferObjectInspector) :: Nil
+
+  override def newInstance(buffers: Seq[BoundReference]): AggregateFunction =
+    new HiveUdafFunction(buffers(0), this)
 
   override def toString = s"$nodeName#${funcWrapper.functionClassName}(${children.mkString(",")})"
 }
 
 /**
  * Converts a Hive Generic User Defined Table Generating Function (UDTF) to a
- * [[catalyst.expressions.Generator Generator]].  Note that the semantics of Generators do not allow
- * Generators to maintain state in between input rows.  Thus UDTFs that rely on partitioning
- * dependent operations like calls to `close()` before producing output will not operate the same as
- * in Hive.  However, in practice this should not affect compatibility for most sane UDTFs
+ * [[catalyst.expressions.Generator Generator]].  Note that the semantics of Generators do not
+ * allow Generators to maintain state in between input rows.  Thus UDTFs that rely on partitioning
+ * dependent operations like calls to `close()` before producing output will not operate the same
+ * asin Hive.  However, in practice this should not affect compatibility for most sane UDTFs
  * (e.g. explode or GenericUDTFParseUrlTuple).
  *
  * Operators that require maintaining state in between input rows should instead be implemented as
@@ -296,7 +304,6 @@ private[hive] case class HiveGenericUdtf(
 }
 
 private[hive] case class HiveUdafFunction(
-    funcWrapper: HiveFunctionWrapper,
     bound: BoundReference,
     base: HiveGenericUdaf)
   extends AggregateFunction
@@ -306,7 +313,7 @@ private[hive] case class HiveUdafFunction(
     val f = base.evaluator
     base.mode match {
       case FINAL => f.init(GenericUDAFEvaluator.Mode.FINAL, Array(base.bufferObjectInspector))
-      case COMPLETE => f.init(GenericUDAFEvaluator.Mode.FINAL, base.inspectors)
+      case COMPLETE => f.init(GenericUDAFEvaluator.Mode.COMPLETE, base.inspectors)
       case PARTIAL1 => f.init(GenericUDAFEvaluator.Mode.PARTIAL1, base.inspectors)
     }
 
@@ -315,16 +322,24 @@ private[hive] case class HiveUdafFunction(
 
   // Initialize (reinitialize) the aggregation buffer
   override def reset(buf: MutableRow): Unit = {
-    val buffer = function.getNewAggregationBuffer.asInstanceOf[GenericUDAFEvaluator.AbstractAggregationBuffer]
+    val buffer = function.getNewAggregationBuffer
+      .asInstanceOf[GenericUDAFEvaluator.AbstractAggregationBuffer]
     function.reset(buffer)
-    // This is a hack, we never use the mutable row as buffer, but define our own buffer, which is set as the first element of the buffer
+    // This is a hack, we never use the mutable row as buffer, but define our own buffer,
+    // which is set as the first element of the buffer
     buf.update(bound.ordinal, buffer)
   }
 
-  // Expect the aggregate function fills the aggregation buffer when fed with each value in the group
+  // Expect the aggregate function fills the aggregation buffer when fed with each value
+  // in the group
   override def iterate(arguments: Any, buf: MutableRow): Unit = {
-    // TODO hive accept multiple arguments
-    function.iterate(buf.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal), arguments.asInstanceOf[Seq[AnyRef]].toArray)
+    val args = arguments.asInstanceOf[Seq[AnyRef]].zip(base.inspectors).map {
+      case (value, oi) => wrap(value, oi)
+    }.toArray
+
+    function.iterate(
+      buf.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal),
+      args)
   }
 
   // Merge 2 aggregation buffer, and write back to the later one
@@ -336,12 +351,16 @@ private[hive] case class HiveUdafFunction(
   @deprecated
   override def terminatePartial(buf: MutableRow): Unit = {
     val buffer = buf.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal)
-    buf.update(bound.ordinal, unwrap(function.terminatePartial(buffer), base.bufferObjectInspector)) // this is for serialization
+    buf.update(bound.ordinal,
+      unwrap(function.terminatePartial(buffer),
+      base.bufferObjectInspector)) // this is for serialization
   }
 
   // Output the final result by feeding the aggregation buffer
   override def terminate(input: Row): Any = {
-    unwrap(function.terminate(input.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal)), base.objectInspector)
+    unwrap(function.terminate(
+      input.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal)),
+      base.objectInspector)
   }
 }
 

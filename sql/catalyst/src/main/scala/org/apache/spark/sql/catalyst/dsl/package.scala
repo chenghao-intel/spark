@@ -136,10 +136,12 @@ package object dsl {
       analysis.UnresolvedAttribute(s.name)
 
     def sum(e: Expression) = Sum(e)
-    def sumDistinct(e: Expression) = SumDistinct(e)
+    def sumDistinct(e: Expression) = Sum(e, true)
     def count(e: Expression) = Count(e)
+    def countDistinct(e: Expression) = CountDistinct(e :: Nil)
     def countDistinct(e: Expression*) = CountDistinct(e)
-    def approxCountDistinct(e: Expression, rsd: Double = 0.05) = ApproxCountDistinct(e, rsd)
+    // TODO we don't support approximate, will convert it into Count
+    def approxCountDistinct(e: Expression, rsd: Double = 0.05) = CountDistinct(e :: Nil)
     def avg(e: Expression) = Average(e)
     def first(e: Expression) = First(e)
     def last(e: Expression) = Last(e)

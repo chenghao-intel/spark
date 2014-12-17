@@ -128,9 +128,10 @@ private[sql] abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
       case _ => Nil
     }
 
-    def containsDistinct(aggregateExpressions: Seq[NamedExpression]) = aggregateExpressions.flatMap(_.collect {
-      case ae: AggregateExpression if ae.distinct => true
-    }).contains(true)
+    def containsDistinct(aggregateExpressions: Seq[NamedExpression]) =
+      aggregateExpressions.flatMap(_.collect {
+        case ae: AggregateExpression if ae.distinct => true
+      }).contains(true)
 
     def allAggregates(exprs: Seq[Expression]) =
       exprs.flatMap(_.collect { case a: AggregateExpression => a })
