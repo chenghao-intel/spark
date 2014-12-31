@@ -52,16 +52,19 @@ private[hive] abstract class HiveFunctionRegistry
     val functionInfo: FunctionInfo =
       Option(FunctionRegistry.getFunctionInfo(name.toLowerCase)).getOrElse(
         sys.error(s"Couldn't find function $name"))
+    val funcClazz = functionInfo.getFunctionClass
 
     val functionClassName = functionInfo.getFunctionClass.getName
 
-    if (classOf[UDF].isAssignableFrom(functionInfo.getFunctionClass)) {
+    if (classOf[UDF].isAssignableFrom(funcClazz)) {
       HiveSimpleUdf(new HiveFunctionWrapper(functionClassName), children)
-    } else if (classOf[GenericUDF].isAssignableFrom(functionInfo.getFunctionClass)) {
+    } else if (classOf[GenericUDF].isAssignableFrom(funcClazz)) {
       HiveGenericUdf(new HiveFunctionWrapper(functionClassName), children)
-    } else if (functionInfo.getGenericUDAFResolver != null) {
-      HiveGenericUdaf(new HiveFunctionWrapper(functionClassName), children, distinct)
-    } else if (classOf[GenericUDTF].isAssignableFrom(functionInfo.getFunctionClass)) {
+    } else if (classOf[AbstractGenericUDAFResolver].isAssignableFrom(funcClazz)) {
+      HiveGenericUdaf(new HiveFunctionWrapper(functionClassName), children, distinct, false)
+    } else if (classOf[UDAF].isAssignableFrom(funcClazz)) {
+      HiveGenericUdaf(new HiveFunctionWrapper(functionClassName), children, distinct, true)
+    } else if (classOf[GenericUDTF].isAssignableFrom(funcClazz)) {
       HiveGenericUdtf(new HiveFunctionWrapper(functionClassName), Nil, children)
     } else {
       sys.error(s"No handler for udf ${functionInfo.getFunctionClass}")
@@ -184,15 +187,22 @@ private[hive] case class HiveGenericUdf(funcWrapper: HiveFunctionWrapper, childr
 private[hive] case class HiveGenericUdaf(
     funcWrapper: HiveFunctionWrapper,
     children: Seq[Expression],
-    distinct: Boolean) extends AggregateExpression
+    distinct: Boolean,
+    isUDAF: Boolean) extends AggregateExpression
   with HiveInspectors {
   type UDFType = AbstractGenericUDAFResolver
 
   // Hive UDAF evaluator
-  def evaluator = resolver.getEvaluator(children.map(_.dataType.toTypeInfo).toArray)
+  def evaluator = resolver.getEvaluator(
+    new SimpleGenericUDAFParameterInfo(inspectors, false, false))
 
   @transient
-  protected lazy val resolver: AbstractGenericUDAFResolver = funcWrapper.createFunction()
+  protected lazy val resolver: AbstractGenericUDAFResolver = if (isUDAF) {
+    // if it's UDAF, we need the UDAF bridge
+    new GenericUDAFBridge(funcWrapper.createFunction())
+  } else {
+    funcWrapper.createFunction()
+  }
 
   // Output data object inspector
   @transient
