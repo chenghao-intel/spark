@@ -364,9 +364,9 @@ case class CountDistinctFunction(aggr: BoundReference, base: CountDistinct)
   }
 
   override def iterate(argument: Any, buf: MutableRow): Unit = {
-    if (argument.asInstanceOf[Seq[_]].exists(_ != null)) {
-      // CountDistinct supports multiple expression
-      // if any of its expressions contains non-null
+    if (!argument.asInstanceOf[Seq[_]].exists(_ == null)) {
+      // CountDistinct supports multiple expression, and ONLY IF
+      // none of its expressions value equals null
       if (buf.isNullAt(aggr.ordinal)) {
         buf.setLong(aggr.ordinal, 1L)
       } else {
