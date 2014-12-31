@@ -238,7 +238,7 @@ case class AggregatePreShuffle(
           idx += 1
         }
 
-        joinedRow(keybuffer.buffer, keybuffer.key)
+        joinedRow(keybuffer.buffer, keybuffer.key).copy()
       }
     }
   }
