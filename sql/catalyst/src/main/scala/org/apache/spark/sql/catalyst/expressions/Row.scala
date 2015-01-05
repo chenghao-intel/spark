@@ -17,7 +17,8 @@
 
 package org.apache.spark.sql.catalyst.expressions
 
-import org.apache.spark.sql.catalyst.types.NativeType
+import org.apache.spark.sql.catalyst.types._
+import org.apache.spark.sql.catalyst.types.decimal.Decimal
 
 object Row {
   /**
@@ -64,7 +65,13 @@ trait Row extends Seq[Any] with Serializable {
   def getShort(i: Int): Short
   def getByte(i: Int): Byte
   def getString(i: Int): String
-  def getAs[T](i: Int): T = apply(i).asInstanceOf[T]
+  def getDate(i: Int): java.sql.Date
+  def getTimestamp(i: Int): java.sql.Timestamp
+  def getBinary(i: Int): Array[Byte]
+  def getDecimal(i: Int): Decimal
+  def getList(i: Int): Seq[_]
+  def getMap(i: Int): Map[_, _]
+  def getRow(i: Int): Row
 
   override def toString() =
     s"[${this.mkString(",")}]"
@@ -99,6 +106,13 @@ trait MutableRow extends Row {
   def setByte(ordinal: Int, value: Byte)
   def setFloat(ordinal: Int, value: Float)
   def setString(ordinal: Int, value: String)
+  def setDate(i: Int, value: java.sql.Date)
+  def setTimestamp(i: Int, value: java.sql.Timestamp)
+  def setBinary(i: Int, value: Array[Byte])
+  def setDecimal(i: Int, value: Decimal)
+  def setList(i: Int, value: Seq[_])
+  def setMap(i: Int, value: Map[_, _])
+  def setRow(i: Int, value: MutableRow)
 }
 
 /**
@@ -119,7 +133,13 @@ object EmptyRow extends Row {
   def getShort(i: Int): Short = throw new UnsupportedOperationException
   def getByte(i: Int): Byte = throw new UnsupportedOperationException
   def getString(i: Int): String = throw new UnsupportedOperationException
-  override def getAs[T](i: Int): T = throw new UnsupportedOperationException
+  def getDate(i: Int): java.sql.Date = throw new UnsupportedOperationException
+  def getTimestamp(i: Int): java.sql.Timestamp = throw new UnsupportedOperationException
+  def getBinary(i: Int): Array[Byte] = throw new UnsupportedOperationException
+  def getDecimal(i: Int): Decimal = throw new UnsupportedOperationException
+  def getList(i: Int): Seq[_] = throw new UnsupportedOperationException
+  def getMap(i: Int): Map[_, _] = throw new UnsupportedOperationException
+  def getRow(i: Int): Row = throw new UnsupportedOperationException
 
   def copy() = this
 }
@@ -183,6 +203,34 @@ class GenericRow(protected[sql] val values: Array[Any]) extends Row {
     values(i).asInstanceOf[String]
   }
 
+  def getDate(i: Int): java.sql.Date = {
+    values(i).asInstanceOf[java.sql.Date]
+  }
+
+  def getTimestamp(i: Int): java.sql.Timestamp = {
+    values(i).asInstanceOf[java.sql.Timestamp]
+  }
+
+  def getBinary(i: Int): Array[Byte] = {
+    values(i).asInstanceOf[Array[Byte]]
+  }
+
+  def getDecimal(i: Int): Decimal = {
+    values(i).asInstanceOf[Decimal]
+  }
+
+  def getList(i: Int): Seq[_] = {
+    values(i).asInstanceOf[Seq[_]]
+  }
+
+  def getMap(i: Int): Map[_, _] = {
+    values(i).asInstanceOf[Map[_, _]]
+  }
+
+  def getRow(i: Int): Row = {
+    values(i).asInstanceOf[Row]
+  }
+
   // Custom hashCode function that matches the efficient code generated version.
   override def hashCode(): Int = {
     var result: Int = 37
@@ -228,6 +276,13 @@ class GenericMutableRow(v: Array[Any]) extends GenericRow(v) with MutableRow {
   override def setInt(ordinal: Int, value: Int): Unit = { values(ordinal) = value }
   override def setLong(ordinal: Int, value: Long): Unit = { values(ordinal) = value }
   override def setString(ordinal: Int, value: String): Unit = { values(ordinal) = value }
+  override def setDate(ordinal: Int, value: java.sql.Date): Unit = { values(ordinal) = value }
+  override def setTimestamp(ordinal: Int, value: java.sql.Timestamp): Unit = { values(ordinal) = value }
+  override def setBinary(ordinal: Int, value: Array[Byte]): Unit = { values(ordinal) = value }
+  override def setDecimal(ordinal: Int, value: Decimal): Unit = { values(ordinal) = value }
+  override def setList(ordinal: Int, value: Seq[_]): Unit = { values(ordinal) = value }
+  override def setMap(ordinal: Int, value: Map[_, _]): Unit = { values(ordinal) = value }
+  override def setRow(ordinal: Int, value: MutableRow): Unit = { values(ordinal) = value }
 
   override def setNullAt(i: Int): Unit = { values(i) = null }
 
@@ -269,4 +324,28 @@ class RowOrdering(ordering: Seq[SortOrder]) extends Ordering[Row] {
     }
     return 0
   }
+}
+
+abstract class UserDefinedData extends Serializable {
+  final def load(row: Row): this.type = {
+    if (row == null) {
+      null
+    } else {
+      loadInternal(row)
+    }
+  }
+
+  final def store(row: MutableRow): MutableRow = {
+    val cache = if (row == null) {
+      newRow()
+    } else {
+      row
+    }
+
+    storeInternal(cache)
+  }
+
+  def newRow(): MutableRow
+  protected def storeInternal(row: MutableRow): MutableRow
+  protected def loadInternal(row: Row): this.type
 }

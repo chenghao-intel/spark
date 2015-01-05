@@ -23,13 +23,13 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.api.java.{DataType => JDataType, StructField => JStructField,
-  MetadataBuilder => JMetaDataBuilder, UDTWrappers}
+  MetadataBuilder => JMetaDataBuilder}
 import org.apache.spark.sql.api.java.{DecimalType => JDecimalType}
 import org.apache.spark.sql.catalyst.types.decimal.Decimal
 import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.catalyst.types.UserDefinedType
 
-protected[sql] object DataTypeConversions {
+object DataTypeConversions {
 
   /**
    * Returns the equivalent StructField in Scala for the given StructField in Java.
@@ -46,9 +46,6 @@ protected[sql] object DataTypeConversions {
    * Returns the equivalent DataType in Java for the given DataType in Scala.
    */
   def asJavaDataType(scalaDataType: DataType): JDataType = scalaDataType match {
-    case udtType: UserDefinedType[_] =>
-      UDTWrappers.wrapAsJava(udtType)
-
     case StringType => JDataType.StringType
     case BinaryType => JDataType.BinaryType
     case BooleanType => JDataType.BooleanType
@@ -89,9 +86,6 @@ protected[sql] object DataTypeConversions {
    * Returns the equivalent DataType in Scala for the given DataType in Java.
    */
   def asScalaDataType(javaDataType: JDataType): DataType = javaDataType match {
-    case udtType: org.apache.spark.sql.api.java.UserDefinedType[_] =>
-      UDTWrappers.wrapAsScala(udtType)
-
     case stringType: org.apache.spark.sql.api.java.StringType =>
       StringType
     case binaryType: org.apache.spark.sql.api.java.BinaryType =>
@@ -162,7 +156,7 @@ protected[sql] object DataTypeConversions {
 
   /** Converts Java objects to catalyst rows / types */
   def convertJavaToCatalyst(a: Any, dataType: DataType): Any = (a, dataType) match {
-    case (obj, udt: UserDefinedType[_]) => ScalaReflection.convertToCatalyst(obj, udt) // Scala type
+    case (obj, udt: UserDefinedType) => ScalaReflection.convertToCatalyst(obj, udt) // Scala type
     case (d: java.math.BigDecimal, _) => Decimal(BigDecimal(d))
     case (other, _) => other
   }

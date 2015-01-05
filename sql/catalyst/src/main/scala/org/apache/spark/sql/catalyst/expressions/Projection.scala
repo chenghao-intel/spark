@@ -17,6 +17,8 @@
 
 package org.apache.spark.sql.catalyst.expressions
 
+import org.apache.spark.sql.catalyst.types.decimal.Decimal
+
 
 /**
  * A [[Projection]] that is calculated by calling the `eval` of each of the specified expressions.
@@ -139,8 +141,26 @@ class JoinedRow extends Row {
   def getString(i: Int): String =
     if (i < row1.size) row1.getString(i) else row2.getString(i - row1.size)
 
-  override def getAs[T](i: Int): T =
-    if (i < row1.size) row1.getAs[T](i) else row2.getAs[T](i - row1.size)
+  def getDate(i: Int): java.sql.Date =
+    if (i < row1.size) row1.getDate(i) else row2.getDate(i - row1.size)
+
+  def getTimestamp(i: Int): java.sql.Timestamp =
+    if (i < row1.size) row1.getTimestamp(i) else row2.getTimestamp(i - row1.size)
+
+  def getBinary(i: Int): Array[Byte] =
+    if (i < row1.size) row1.getBinary(i) else row2.getBinary(i - row1.size)
+
+  def getDecimal(i: Int): Decimal =
+    if (i < row1.size) row1.getDecimal(i) else row2.getDecimal(i - row1.size)
+
+  def getList(i: Int): Seq[_] =
+    if (i < row1.size) row1.getList(i) else row2.getList(i - row1.size)
+
+  def getMap(i: Int): Map[_, _] =
+    if (i < row1.size) row1.getMap(i) else row2.getMap(i - row1.size)
+
+  def getRow(i: Int): Row =
+    if (i < row1.size) row1.getRow(i) else row2.getRow(i - row1.size)
 
   def copy() = {
     val totalSize = row1.size + row2.size
@@ -231,8 +251,26 @@ class JoinedRow2 extends Row {
   def getString(i: Int): String =
     if (i < row1.size) row1.getString(i) else row2.getString(i - row1.size)
 
-  override def getAs[T](i: Int): T =
-    if (i < row1.size) row1.getAs[T](i) else row2.getAs[T](i - row1.size)
+  def getDate(i: Int): java.sql.Date =
+    if (i < row1.size) row1.getDate(i) else row2.getDate(i - row1.size)
+
+  def getTimestamp(i: Int): java.sql.Timestamp =
+    if (i < row1.size) row1.getTimestamp(i) else row2.getTimestamp(i - row1.size)
+
+  def getBinary(i: Int): Array[Byte] =
+    if (i < row1.size) row1.getBinary(i) else row2.getBinary(i - row1.size)
+
+  def getDecimal(i: Int): Decimal =
+    if (i < row1.size) row1.getDecimal(i) else row2.getDecimal(i - row1.size)
+
+  def getList(i: Int): Seq[_] =
+    if (i < row1.size) row1.getList(i) else row2.getList(i - row1.size)
+
+  def getMap(i: Int): Map[_, _] =
+    if (i < row1.size) row1.getMap(i) else row2.getMap(i - row1.size)
+
+  def getRow(i: Int): Row =
+    if (i < row1.size) row1.getRow(i) else row2.getRow(i - row1.size)
 
   def copy() = {
     val totalSize = row1.size + row2.size
@@ -317,8 +355,26 @@ class JoinedRow3 extends Row {
   def getString(i: Int): String =
     if (i < row1.size) row1.getString(i) else row2.getString(i - row1.size)
 
-  override def getAs[T](i: Int): T =
-    if (i < row1.size) row1.getAs[T](i) else row2.getAs[T](i - row1.size)
+  def getDate(i: Int): java.sql.Date =
+    if (i < row1.size) row1.getDate(i) else row2.getDate(i - row1.size)
+
+  def getTimestamp(i: Int): java.sql.Timestamp =
+    if (i < row1.size) row1.getTimestamp(i) else row2.getTimestamp(i - row1.size)
+
+  def getBinary(i: Int): Array[Byte] =
+    if (i < row1.size) row1.getBinary(i) else row2.getBinary(i - row1.size)
+
+  def getDecimal(i: Int): Decimal =
+    if (i < row1.size) row1.getDecimal(i) else row2.getDecimal(i - row1.size)
+
+  def getList(i: Int): Seq[_] =
+    if (i < row1.size) row1.getList(i) else row2.getList(i - row1.size)
+
+  def getMap(i: Int): Map[_, _] =
+    if (i < row1.size) row1.getMap(i) else row2.getMap(i - row1.size)
+
+  def getRow(i: Int): Row =
+    if (i < row1.size) row1.getRow(i) else row2.getRow(i - row1.size)
 
   def copy() = {
     val totalSize = row1.size + row2.size
@@ -403,8 +459,26 @@ class JoinedRow4 extends Row {
   def getString(i: Int): String =
     if (i < row1.size) row1.getString(i) else row2.getString(i - row1.size)
 
-  override def getAs[T](i: Int): T =
-    if (i < row1.size) row1.getAs[T](i) else row2.getAs[T](i - row1.size)
+  def getDate(i: Int): java.sql.Date =
+    if (i < row1.size) row1.getDate(i) else row2.getDate(i - row1.size)
+
+  def getTimestamp(i: Int): java.sql.Timestamp =
+    if (i < row1.size) row1.getTimestamp(i) else row2.getTimestamp(i - row1.size)
+
+  def getBinary(i: Int): Array[Byte] =
+    if (i < row1.size) row1.getBinary(i) else row2.getBinary(i - row1.size)
+
+  def getDecimal(i: Int): Decimal =
+    if (i < row1.size) row1.getDecimal(i) else row2.getDecimal(i - row1.size)
+
+  def getList(i: Int): Seq[_] =
+    if (i < row1.size) row1.getList(i) else row2.getList(i - row1.size)
+
+  def getMap(i: Int): Map[_, _] =
+    if (i < row1.size) row1.getMap(i) else row2.getMap(i - row1.size)
+
+  def getRow(i: Int): Row =
+    if (i < row1.size) row1.getRow(i) else row2.getRow(i - row1.size)
 
   def copy() = {
     val totalSize = row1.size + row2.size
@@ -489,8 +563,26 @@ class JoinedRow5 extends Row {
   def getString(i: Int): String =
     if (i < row1.size) row1.getString(i) else row2.getString(i - row1.size)
 
-  override def getAs[T](i: Int): T =
-    if (i < row1.size) row1.getAs[T](i) else row2.getAs[T](i - row1.size)
+  def getDate(i: Int): java.sql.Date =
+    if (i < row1.size) row1.getDate(i) else row2.getDate(i - row1.size)
+
+  def getTimestamp(i: Int): java.sql.Timestamp =
+    if (i < row1.size) row1.getTimestamp(i) else row2.getTimestamp(i - row1.size)
+
+  def getBinary(i: Int): Array[Byte] =
+    if (i < row1.size) row1.getBinary(i) else row2.getBinary(i - row1.size)
+
+  def getDecimal(i: Int): Decimal =
+    if (i < row1.size) row1.getDecimal(i) else row2.getDecimal(i - row1.size)
+
+  def getList(i: Int): Seq[_] =
+    if (i < row1.size) row1.getList(i) else row2.getList(i - row1.size)
+
+  def getMap(i: Int): Map[_, _] =
+    if (i < row1.size) row1.getMap(i) else row2.getMap(i - row1.size)
+
+  def getRow(i: Int): Row =
+    if (i < row1.size) row1.getRow(i) else row2.getRow(i - row1.size)
 
   def copy() = {
     val totalSize = row1.size + row2.size

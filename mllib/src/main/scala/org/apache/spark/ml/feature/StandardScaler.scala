@@ -21,9 +21,10 @@ import org.apache.spark.annotation.AlphaComponent
 import org.apache.spark.ml._
 import org.apache.spark.ml.param._
 import org.apache.spark.mllib.feature
-import org.apache.spark.mllib.linalg.{Vector, VectorUDT}
+import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.Star
+import org.apache.spark.sql.catalyst.types.UserDefinedType
 import org.apache.spark.sql.catalyst.dsl._
 
 /**
@@ -59,11 +60,12 @@ class StandardScaler extends Estimator[StandardScalerModel] with StandardScalerP
   private[ml] override def transformSchema(schema: StructType, paramMap: ParamMap): StructType = {
     val map = this.paramMap ++ paramMap
     val inputType = schema(map(inputCol)).dataType
-    require(inputType.isInstanceOf[VectorUDT],
+    require(inputType.isInstanceOf[UserDefinedType],
       s"Input column ${map(inputCol)} must be a vector column")
     require(!schema.fieldNames.contains(map(outputCol)),
       s"Output column ${map(outputCol)} already exists.")
-    val outputFields = schema.fields :+ StructField(map(outputCol), new VectorUDT, false)
+    val outputFields = schema.fields :+ StructField(
+      map(outputCol), new UserDefinedType(classOf[Vector]), false)
     StructType(outputFields)
   }
 }
@@ -95,11 +97,12 @@ class StandardScalerModel private[ml] (
   private[ml] override def transformSchema(schema: StructType, paramMap: ParamMap): StructType = {
     val map = this.paramMap ++ paramMap
     val inputType = schema(map(inputCol)).dataType
-    require(inputType.isInstanceOf[VectorUDT],
+    require(inputType.isInstanceOf[UserDefinedType],
       s"Input column ${map(inputCol)} must be a vector column")
     require(!schema.fieldNames.contains(map(outputCol)),
       s"Output column ${map(outputCol)} already exists.")
-    val outputFields = schema.fields :+ StructField(map(outputCol), new VectorUDT, false)
+    val outputFields = schema.fields :+ StructField(
+      map(outputCol), new UserDefinedType(classOf[Vector]), false)
     StructType(outputFields)
   }
 }

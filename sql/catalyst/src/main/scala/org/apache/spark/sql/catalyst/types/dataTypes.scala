@@ -19,6 +19,8 @@ package org.apache.spark.sql.catalyst.types
 
 import java.sql.{Date, Timestamp}
 
+import org.apache.spark.sql.catalyst.annotation.SQLUserDefinedType
+
 import scala.math.Numeric.{FloatAsIfIntegral, BigDecimalAsIfIntegral, DoubleAsIfIntegral}
 import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.{TypeTag, runtimeMirror, typeTag}
@@ -30,8 +32,8 @@ import org.json4s.JsonDSL._
 import org.json4s.jackson.JsonMethods._
 
 import org.apache.spark.annotation.DeveloperApi
-import org.apache.spark.sql.catalyst.ScalaReflectionLock
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression, Row}
+import org.apache.spark.sql.catalyst.{ScalaReflection, ScalaReflectionLock}
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.types.decimal._
 import org.apache.spark.sql.catalyst.util.Metadata
 import org.apache.spark.util.Utils
@@ -74,7 +76,7 @@ object DataType {
         ("pyClass", _),
         ("sqlType", _),
         ("type", JString("udt"))) =>
-      Class.forName(udtClass).newInstance().asInstanceOf[UserDefinedType[_]]
+      Class.forName(udtClass).newInstance().asInstanceOf[UserDefinedType]
   }
 
   private def parseStructField(json: JValue): StructField = json match {
@@ -94,6 +96,8 @@ object DataType {
 
   @deprecated("Use DataType.fromJson instead", "1.2.0")
   def fromCaseClassString(string: String): DataType = CaseClassStringParser(string)
+
+  def fieldsFromString(string: String) = CaseClassStringParser.structFields(string)
 
   private object CaseClassStringParser extends RegexParsers {
     protected lazy val primitiveType: Parser[DataType] =
@@ -139,14 +143,29 @@ object DataType {
       )
 
     protected lazy val structType: Parser[DataType] =
-      "StructType\\([A-zA-z]*\\(".r ~> repsep(structField, ",") <~ "))" ^^ {
+      "StructType\\([a-zA-Z]*\\(".r ~> repsep(structField, ",") <~ "))" ^^ {
         case fields => new StructType(fields)
+      }
+
+    protected lazy val userDefinedType: Parser[DataType] =
+      "UDT(" ~> "[a-zA-Z0-9_\\.\\$]*".r <~ ")" ^^ {
+        case className if Utils.classIsLoadable(className) &&
+          Utils.classForName(className).isAnnotationPresent(classOf[SQLUserDefinedType]) =>
+          new UserDefinedType(className)
+
+        case className => throw new IllegalArgumentException(s"Cannot find class: $className")
+      }
+
+    protected lazy val structFields: Parser[Seq[StructField]] =
+      "(" ~> repsep(structField, ",") <~ ")" ^^ {
+        case fields => fields
       }
 
     protected lazy val dataType: Parser[DataType] =
       ( arrayType
       | mapType
       | structType
+      | userDefinedType
       | primitiveType
       )
 
@@ -161,6 +180,14 @@ object DataType {
         throw new IllegalArgumentException(s"Unsupported dataType: $asString, $failure")
     }
 
+    /**
+     * Parses a string representation of a array of StructField
+     */
+    def structFields(asString: String): Seq[StructField] = parseAll(structFields, asString) match {
+      case Success(result, _) => result
+      case failure: NoSuccess =>
+        throw new IllegalArgumentException(s"Unsupported StructField: $asString, $failure")
+    }
   }
 
   protected[types] def buildFormattedString(
@@ -617,34 +644,46 @@ case class MapType(
  * The conversion via `deserialize` occurs when reading from a `SchemaRDD`.
  */
 @DeveloperApi
-abstract class UserDefinedType[UserType] extends DataType with Serializable {
+class UserDefinedType(uddClassName: String)
+    extends StructType(
+      DataType.fieldsFromString(
+        Utils.classForName(uddClassName).getAnnotation(
+          classOf[SQLUserDefinedType]).schema())) {
 
-  /** Underlying storage type for this UDT */
-  def sqlType: DataType
+  @transient private lazy val uddClazz = {
+    Utils.classForName(uddClassName).asInstanceOf[Class[_ <: UserDefinedData]]
+  }
+
+  def this(clazz: Class[_ <: UserDefinedData]) {
+    this(clazz.getCanonicalName)
+  }
 
   /** Paired Python UDT class, if exists. */
-  def pyUDT: String = null
+  def pyUDT: String = null // TODO remove?
 
   /**
    * Convert the user type to a SQL datum
-   *
-   * TODO: Can we make this take obj: UserType?  The issue is in ScalaReflection.convertToCatalyst,
-   *       where we need to convert Any to UserType.
    */
-  def serialize(obj: Any): Any
+  def serialize(udd: UserDefinedData, mr: MutableRow = null): MutableRow = {
+    udd.store(mr)
+  }
 
   /** Convert a SQL datum to the user type */
-  def deserialize(datum: Any): UserType
+  def deserialize[UserType](datum: Row): UserType = {
+    uddClazz.newInstance().load(datum).asInstanceOf[UserType]
+  }
 
-  override private[sql] def jsonValue: JValue = {
-    ("type" -> "udt") ~
+  override private[sql] def jsonValue = {
+    ("type" -> uddClassName) ~
       ("class" -> this.getClass.getName) ~
       ("pyClass" -> pyUDT) ~
-      ("sqlType" -> sqlType.jsonValue)
+      ("fields" -> fields.map(_.jsonValue))
   }
 
   /**
    * Class object for the UserType
    */
-  def userClass: java.lang.Class[UserType]
+  def userClass: java.lang.Class[_ <: UserDefinedData] = {
+    Utils.classForName(uddClassName).asInstanceOf[Class[_ <: UserDefinedData]]
+  }
 }

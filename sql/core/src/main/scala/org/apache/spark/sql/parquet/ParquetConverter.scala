@@ -77,9 +77,6 @@ private[sql] object CatalystConverter {
       parent: CatalystConverter): Converter = {
     val fieldType: DataType = field.dataType
     fieldType match {
-      case udt: UserDefinedType[_] => {
-        createConverter(field.copy(dataType = udt.sqlType), fieldIndex, parent)
-      }
       // For native JVM types we use a converter with native arrays
       case ArrayType(elementType: NativeType, false) => {
         new CatalystNativeArrayConverter(elementType, fieldIndex, parent)

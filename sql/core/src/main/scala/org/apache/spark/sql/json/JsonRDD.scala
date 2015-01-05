@@ -455,7 +455,6 @@ private[sql] object JsonRDD extends Logging {
       case (BinaryType, v: Array[Byte]) => gen.writeBinary(v)
       case (BooleanType, v: Boolean) => gen.writeBoolean(v)
       case (DateType, v) => gen.writeString(v.toString)
-      case (udt: UserDefinedType[_], v) => valWriter(udt.sqlType, v)
 
       case (ArrayType(ty, _), v: Seq[_] ) =>
         gen.writeStartArray()

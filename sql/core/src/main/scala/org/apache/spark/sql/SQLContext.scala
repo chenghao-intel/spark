@@ -114,6 +114,19 @@ class SQLContext(@transient val sparkContext: SparkContext)
     new SchemaRDD(this, LogicalRDD(attributeSeq, rowRDD)(self))
   }
 
+  /**
+   * Creates a SchemaRDD from an RDD of user defined classes.
+   *
+   * @group userf
+   */
+  implicit def createSchemaRDDFromUDD[A <: UserDefinedData: TypeTag](rdd: RDD[A]) = {
+    SparkPlan.currentContext.set(self)
+    val attributeSeq = ScalaReflection.attributesFor[A]
+    val udt = ScalaReflection.schemaFor[A].dataType.asInstanceOf[UserDefinedType]
+    val rowRDD = RDDConversions.uddToRowRdd(rdd, udt)
+    new SchemaRDD(this, LogicalRDD(attributeSeq, rowRDD)(self))
+  }
+
   implicit def baseRelationToSchemaRDD(baseRelation: BaseRelation): SchemaRDD = {
     logicalPlanToSparkQuery(LogicalRelation(baseRelation))
   }
@@ -484,7 +497,6 @@ class SQLContext(@transient val sparkContext: SparkContext)
       case ArrayType(_, _) => true
       case MapType(_, _, _) => true
       case StructType(_) => true
-      case udt: UserDefinedType[_] => needsConversion(udt.sqlType)
       case other => false
     }
 

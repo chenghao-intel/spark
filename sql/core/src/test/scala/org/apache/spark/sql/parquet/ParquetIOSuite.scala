@@ -83,7 +83,7 @@ class ParquetIOSuite extends QueryTest with ParquetTest {
     val data = (1 to 4).map(i => Tuple1(Array.fill(3)(i.toByte)))
     withParquetRDD(data) { rdd =>
       assertResult(data.map(_._1.mkString(",")).sorted) {
-        rdd.collect().map(_.getAs[Array[Byte]](0).mkString(",")).sorted
+        rdd.collect().map(_.getBinary(0).mkString(",")).sorted
       }
     }
   }

@@ -17,58 +17,65 @@
 
 package org.apache.spark.sql.api.java
 
+import org.apache.spark.sql.catalyst.expressions.{MutableRow, UserDefinedData}
 import org.apache.spark.sql.catalyst.types.{UserDefinedType => ScalaUserDefinedType}
-import org.apache.spark.sql.{DataType => ScalaDataType}
-import org.apache.spark.sql.types.util.DataTypeConversions
 
 /**
- * Scala wrapper for a Java UserDefinedType
- */
-private[sql] class JavaToScalaUDTWrapper[UserType](val javaUDT: UserDefinedType[UserType])
-  extends ScalaUserDefinedType[UserType] with Serializable {
-
-  /** Underlying storage type for this UDT */
-  val sqlType: ScalaDataType = DataTypeConversions.asScalaDataType(javaUDT.sqlType())
+* Scala wrapper for a Java UserDefinedType
+*/
+private[sql] class JavaToScalaUDTWrapper
+(val javaUDT: UserDefinedType) extends ScalaUserDefinedType(javaUDT.userClass()) {
 
   /** Convert the user type to a SQL datum */
-  def serialize(obj: Any): Any = javaUDT.serialize(obj)
+  override def serialize(udd: UserDefinedData, mr: MutableRow): MutableRow = {
+    javaUDT.serialize(udd, mr)
+  }
 
   /** Convert a SQL datum to the user type */
-  def deserialize(datum: Any): UserType = javaUDT.deserialize(datum)
+  override def deserialize[T](datum: org.apache.spark.sql.catalyst.expressions.Row): T = {
+    if (datum != null) {
+      // TODO unnecessary converting
+      javaUDT.deserialize(Row.create(datum)).asInstanceOf[T]
+    } else {
+      null.asInstanceOf[T]
+    }
+  }
 
-  val userClass: java.lang.Class[UserType] = javaUDT.userClass()
+  override def userClass: java.lang.Class[_ <: UserDefinedData] = javaUDT.userClass()
 }
 
 /**
- * Java wrapper for a Scala UserDefinedType
- */
-private[sql] class ScalaToJavaUDTWrapper[UserType](val scalaUDT: ScalaUserDefinedType[UserType])
-  extends UserDefinedType[UserType] with Serializable {
-
-  /** Underlying storage type for this UDT */
-  val sqlType: DataType = DataTypeConversions.asJavaDataType(scalaUDT.sqlType)
+* Java wrapper for a Scala UserDefinedType
+*/
+private[sql] class ScalaToJavaUDTWrapper
+    (val scalaUDT: ScalaUserDefinedType) extends UserDefinedType(scalaUDT.userClass) {
 
   /** Convert the user type to a SQL datum */
-  def serialize(obj: Any): java.lang.Object = scalaUDT.serialize(obj).asInstanceOf[java.lang.Object]
+  override def serialize(udd: UserDefinedData, mr: MutableRow): MutableRow = {
+    scalaUDT.serialize(udd)
+  }
 
   /** Convert a SQL datum to the user type */
-  def deserialize(datum: Any): UserType = scalaUDT.deserialize(datum)
+  override def deserialize(datum: Row): UserDefinedData = if (datum == null) {
+    null
+  } else {
+    scalaUDT.deserialize(datum.row)
+  }
 
-  val userClass: java.lang.Class[UserType] = scalaUDT.userClass
+  override def userClass: java.lang.Class[_ <: UserDefinedData] = scalaUDT.userClass
 }
 
 private[sql] object UDTWrappers {
-
-  def wrapAsScala(udtType: UserDefinedType[_]): ScalaUserDefinedType[_] = {
+  def wrapAsScala(udtType: UserDefinedType): ScalaUserDefinedType = {
     udtType match {
-      case t: ScalaToJavaUDTWrapper[_] => t.scalaUDT
+      case t: ScalaToJavaUDTWrapper => t.scalaUDT
       case _ => new JavaToScalaUDTWrapper(udtType)
     }
   }
 
-  def wrapAsJava(udtType: ScalaUserDefinedType[_]): UserDefinedType[_] = {
+  def wrapAsJava(udtType: ScalaUserDefinedType): UserDefinedType = {
     udtType match {
-      case t: JavaToScalaUDTWrapper[_] => t.javaUDT
+      case t: JavaToScalaUDTWrapper => t.javaUDT
       case _ => new ScalaToJavaUDTWrapper(udtType)
     }
   }

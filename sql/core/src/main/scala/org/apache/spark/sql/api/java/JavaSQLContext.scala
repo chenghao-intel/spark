@@ -25,7 +25,7 @@ import org.apache.spark.annotation.{DeveloperApi, Experimental}
 import org.apache.spark.api.java.{JavaRDD, JavaSparkContext}
 import org.apache.spark.sql.{SQLContext, StructType => SStructType}
 import org.apache.spark.sql.catalyst.annotation.SQLUserDefinedType
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, GenericRow, Row => ScalaRow}
+import org.apache.spark.sql.catalyst.expressions.{Row => ScalaRow, UserDefinedData, AttributeReference, GenericRow}
 import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.json.JsonRDD
 import org.apache.spark.sql.parquet.ParquetRelation
@@ -216,8 +216,9 @@ class JavaSQLContext(val sqlContext: SQLContext) extends UDFRegistration {
     val fields = beanInfo.getPropertyDescriptors.filterNot(_.getName == "class")
     fields.map { property =>
       val (dataType, nullable) = property.getPropertyType match {
-        case c: Class[_] if c.isAnnotationPresent(classOf[SQLUserDefinedType]) =>
-          (c.getAnnotation(classOf[SQLUserDefinedType]).udt().newInstance(), true)
+        case c: Class[UserDefinedData]
+            if c.isAnnotationPresent(classOf[SQLUserDefinedType]) =>
+          (new org.apache.spark.sql.catalyst.types.UserDefinedType(c), true)
         case c: Class[_] if c == classOf[java.lang.String] =>
           (org.apache.spark.sql.StringType, true)
         case c: Class[_] if c == java.lang.Short.TYPE =>

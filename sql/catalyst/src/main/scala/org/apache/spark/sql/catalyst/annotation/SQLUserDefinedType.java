@@ -37,10 +37,5 @@ import org.apache.spark.sql.catalyst.types.UserDefinedType;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
 public @interface SQLUserDefinedType {
-
-  /**
-   * Returns an instance of the UserDefinedType which can serialize and deserialize the user
-   * class to and from Catalyst built-in types.
-   */
-  Class<? extends UserDefinedType<?> > udt();
+  String schema();
 }

@@ -95,7 +95,7 @@ private[hive] class SparkExecuteStatementOperation(
       case FloatType =>
         to += from.getFloat(ordinal)
       case DecimalType() =>
-        to += from.getAs[BigDecimal](ordinal).bigDecimal
+        to += from.getDecimal(ordinal).toBigDecimal
       case LongType =>
         to += from.getLong(ordinal)
       case ByteType =>
@@ -103,9 +103,9 @@ private[hive] class SparkExecuteStatementOperation(
       case ShortType =>
         to += from.getShort(ordinal)
       case DateType =>
-        to += from.getAs[Date](ordinal)
+        to += from.getDate(ordinal)
       case TimestampType =>
-        to +=  from.getAs[Timestamp](ordinal)
+        to +=  from.getTimestamp(ordinal)
       case BinaryType | _: ArrayType | _: StructType | _: MapType =>
         val hiveString = HiveContext.toHiveString((from.get(ordinal), dataTypes(ordinal)))
         to += hiveString

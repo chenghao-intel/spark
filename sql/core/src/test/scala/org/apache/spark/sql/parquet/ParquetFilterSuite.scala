@@ -74,9 +74,9 @@ class ParquetFilterSuite extends QueryTest with ParquetTest {
       (predicate: Predicate, filterClass: Class[_ <: FilterPredicate])
       (expectedResult: => Any): Unit = {
     def checkBinaryAnswer(rdd: SchemaRDD, result: Any): Unit = {
-      val actual = rdd.map(_.getAs[Array[Byte]](0).mkString(",")).collect().toSeq
+      val actual = rdd.map(_.getBinary(0).mkString(",")).collect().toSeq
       val expected = result match {
-        case s: Seq[_] => s.map(_.asInstanceOf[Row].getAs[Array[Byte]](0).mkString(","))
+        case s: Seq[_] => s.map(_.asInstanceOf[Row].getBinary(0).mkString(","))
         case s => Seq(s.asInstanceOf[Array[Byte]].mkString(","))
       }
       assert(actual.sorted === expected.sorted)

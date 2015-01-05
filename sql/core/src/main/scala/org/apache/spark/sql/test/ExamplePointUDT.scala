@@ -17,10 +17,7 @@
 
 package org.apache.spark.sql.test
 
-import java.util
-
-import scala.collection.JavaConverters._
-
+import org.apache.spark.sql.catalyst.expressions.{UserDefinedData, Row, GenericMutableRow, MutableRow}
 import org.apache.spark.sql.catalyst.annotation.SQLUserDefinedType
 import org.apache.spark.sql.catalyst.types._
 
@@ -29,36 +26,37 @@ import org.apache.spark.sql.catalyst.types._
  * @param x x coordinate
  * @param y y coordinate
  */
-@SQLUserDefinedType(udt = classOf[ExamplePointUDT])
-private[sql] class ExamplePoint(val x: Double, val y: Double)
-
-/**
- * User-defined type for [[ExamplePoint]].
- */
-private[sql] class ExamplePointUDT extends UserDefinedType[ExamplePoint] {
-
-  override def sqlType: DataType = ArrayType(DoubleType, false)
-
-  override def pyUDT: String = "pyspark.tests.ExamplePointUDT"
-
-  override def serialize(obj: Any): Seq[Double] = {
-    obj match {
-      case p: ExamplePoint =>
-        Seq(p.x, p.y)
+@SQLUserDefinedType(
+  schema = """
+        (StructField(x, DoubleType, true),
+         StructField(y, DoubleType, true))""")
+private[sql] class ExamplePoint(var x: Double, var y: Double) extends UserDefinedData {
+  // We need default constructor for instance creation in UserDefinedType.deserialize
+  def this() = this(ExamplePoint.INVALID, ExamplePoint.INVALID)
+  override def newRow() = new GenericMutableRow(2)
+  protected override def storeInternal(row: MutableRow): MutableRow = {
+    if (x != ExamplePoint.INVALID && y != ExamplePoint.INVALID) {
+      row.setDouble(0, x)
+      row.setDouble(1, y)
+    } else {
+      row.setNullAt(0)
+      row.setNullAt(1)
     }
+
+    row
   }
 
-  override def deserialize(datum: Any): ExamplePoint = {
-    datum match {
-      case values: Seq[_] =>
-        val xy = values.asInstanceOf[Seq[Double]]
-        assert(xy.length == 2)
-        new ExamplePoint(xy(0), xy(1))
-      case values: util.ArrayList[_] =>
-        val xy = values.asInstanceOf[util.ArrayList[Double]].asScala
-        new ExamplePoint(xy(0), xy(1))
+  protected override def loadInternal(row: Row): this.type = {
+    if (row.isNullAt(0) || row.isNullAt(1)) {
+      null
+    } else {
+      x = row.getDouble(0)
+      y = row.getDouble(1)
+      this
     }
   }
+}
 
-  override def userClass: Class[ExamplePoint] = classOf[ExamplePoint]
+private[sql] object ExamplePoint {
+  val INVALID = Double.MinValue
 }

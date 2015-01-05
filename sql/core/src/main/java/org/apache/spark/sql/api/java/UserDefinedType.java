@@ -17,9 +17,11 @@
 
 package org.apache.spark.sql.api.java;
 
-import java.io.Serializable;
-
 import org.apache.spark.annotation.DeveloperApi;
+import org.apache.spark.sql.catalyst.annotation.SQLUserDefinedType;
+import org.apache.spark.sql.catalyst.expressions.MutableRow;
+import org.apache.spark.sql.catalyst.expressions.UserDefinedData;
+import org.apache.spark.sql.types.util.DataTypeConversions;
 
 /**
  * ::DeveloperApi::
@@ -27,27 +29,48 @@ import org.apache.spark.annotation.DeveloperApi;
  * UDTs may use any other DataType for an underlying representation.
  */
 @DeveloperApi
-public abstract class UserDefinedType<UserType> extends DataType implements Serializable {
+public class UserDefinedType extends StructType {
+    private Class<? extends UserDefinedData> clazz = null;
 
-  protected UserDefinedType() { }
+    protected UserDefinedType(Class<? extends UserDefinedData> clazz) {
+        super(((StructType)
+                (DataTypeConversions.asJavaDataType(
+                   org.apache.spark.sql.catalyst.types.DataType.fromCaseClassString(
+                     clazz.getAnnotation(SQLUserDefinedType.class).schema())))).getFields());
+        this.clazz = clazz;
+    }
 
-  @Override
-  public boolean equals(Object o) {
-    if (this == o) return true;
-    if (o == null || getClass() != o.getClass()) return false;
-    UserDefinedType<UserType> that = (UserDefinedType<UserType>) o;
-    return this.sqlType().equals(that.sqlType());
-  }
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        UserDefinedType that = (UserDefinedType) o;
+        if (clazz != that.clazz) return false;
 
-  /** Underlying storage type for this UDT */
-  public abstract DataType sqlType();
+        return super.equals(that);
+    }
 
-  /** Convert the user type to a SQL datum */
-  public abstract Object serialize(Object obj);
+    @Override
+    public int hashCode() {
+        return super.hashCode() + clazz.hashCode();
+    }
 
-  /** Convert a SQL datum to the user type */
-  public abstract UserType deserialize(Object datum);
+    /** Convert the user type to a SQL datum */
+    public MutableRow serialize(UserDefinedData obj, MutableRow mr) {
+        return obj.store(mr);
+    }
 
-  /** Class object for the UserType */
-  public abstract Class<UserType> userClass();
+    /** Convert a SQL datum to the user type */
+    public UserDefinedData deserialize(Row datum) {
+        try {
+            return (clazz.newInstance().load(datum.row()));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** Class object for the UserType */
+    public Class<? extends UserDefinedData> userClass() {
+        return clazz;
+    }
 }

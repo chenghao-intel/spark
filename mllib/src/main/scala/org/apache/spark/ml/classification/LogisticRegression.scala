@@ -21,11 +21,12 @@ import org.apache.spark.annotation.AlphaComponent
 import org.apache.spark.ml._
 import org.apache.spark.ml.param._
 import org.apache.spark.mllib.classification.LogisticRegressionWithLBFGS
-import org.apache.spark.mllib.linalg.{BLAS, Vector, VectorUDT}
+import org.apache.spark.mllib.linalg.{BLAS, Vector}
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.Star
 import org.apache.spark.sql.catalyst.dsl._
+import org.apache.spark.sql.catalyst.types.UserDefinedType
 import org.apache.spark.storage.StorageLevel
 
 /**
@@ -51,7 +52,7 @@ private[classification] trait LogisticRegressionParams extends Params
     val map = this.paramMap ++ paramMap
     val featuresType = schema(map(featuresCol)).dataType
     // TODO: Support casting Array[Double] and Array[Float] to Vector.
-    require(featuresType.isInstanceOf[VectorUDT],
+    require(featuresType.isInstanceOf[UserDefinedType],
       s"Features column ${map(featuresCol)} must be a vector column but got $featuresType.")
     if (fitting) {
       val labelType = schema(map(labelCol)).dataType

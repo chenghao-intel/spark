@@ -19,6 +19,7 @@ package org.apache.spark.sql
 
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.types.decimal.Decimal
 
 /* Implicits */
 import org.apache.spark.sql.catalyst.dsl._
@@ -183,17 +184,17 @@ class DslQuerySuite extends QueryTest {
 
     checkAnswer(
       decimalData.aggregate(avg('a)),
-      BigDecimal(2.0))
+      Decimal(2.0))
     checkAnswer(
       decimalData.aggregate(avg('a), sumDistinct('a)), // non-partial
-      (BigDecimal(2.0), BigDecimal(6)) :: Nil)
+      (Decimal(2.0), Decimal(6)) :: Nil)
 
     checkAnswer(
       decimalData.aggregate(avg('a cast DecimalType(10, 2))),
-      BigDecimal(2.0))
+      Decimal(BigDecimal(2.0), 10, 2))
     checkAnswer(
       decimalData.aggregate(avg('a cast DecimalType(10, 2)), sumDistinct('a cast DecimalType(10, 2))), // non-partial
-      (BigDecimal(2.0), BigDecimal(6)) :: Nil)
+      (Decimal(BigDecimal(2.0), 10, 2), Decimal(BigDecimal(6), 10, 2)) :: Nil)
   }
 
   test("null average") {

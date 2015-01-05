@@ -21,6 +21,7 @@ import breeze.linalg.{DenseMatrix => BDM}
 import org.scalatest.FunSuite
 
 import org.apache.spark.SparkException
+import org.apache.spark.sql.catalyst.types.UserDefinedType
 import org.apache.spark.mllib.util.TestingUtils._
 
 class VectorsSuite extends FunSuite {
@@ -163,9 +164,9 @@ class VectorsSuite extends FunSuite {
     val dv1 = Vectors.dense(1.0, 2.0)
     val sv0 = Vectors.sparse(2, Array.empty, Array.empty)
     val sv1 = Vectors.sparse(2, Array(1), Array(2.0))
-    val udt = new VectorUDT()
+    val udt = new UserDefinedType(classOf[Vector])
     for (v <- Seq(dv0, dv1, sv0, sv1)) {
-      assert(v === udt.deserialize(udt.serialize(v)))
+      assert(v === udt.deserialize[Vector](udt.serialize(v)))
     }
   }
 

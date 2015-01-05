@@ -18,6 +18,7 @@
 package org.apache.spark.sql.catalyst.expressions
 
 import org.apache.spark.sql.catalyst.types._
+import org.apache.spark.sql.catalyst.types.decimal.Decimal
 
 /**
  * A parent class for mutable container objects that are reused when the values are changed,
@@ -307,7 +308,59 @@ final class SpecificMutableRow(val values: Array[MutableValue]) extends MutableR
     values(i).asInstanceOf[MutableByte].value
   }
 
-  override def getAs[T](i: Int): T = {
-    values(i).boxed.asInstanceOf[T]
+  def getDate(i: Int): java.sql.Date = {
+    values(i).boxed.asInstanceOf[java.sql.Date]
+  }
+
+  def setDate(i: Int, value: java.sql.Date): Unit = {
+    values(i).update(value)
+  }
+
+  def getTimestamp(i: Int): java.sql.Timestamp = {
+    values(i).boxed.asInstanceOf[java.sql.Timestamp]
+  }
+
+  def setTimestamp(i: Int, value: java.sql.Timestamp): Unit = {
+    values(i).update(value)
+  }
+
+  def getBinary(i: Int): Array[Byte] = {
+    values(i).boxed.asInstanceOf[Array[Byte]]
+  }
+
+  def setBinary(i: Int, value: Array[Byte]): Unit = {
+    values(i).update(value)
+  }
+
+  def getDecimal(i: Int): Decimal = {
+    values(i).boxed.asInstanceOf[Decimal]
+  }
+
+  def setDecimal(i: Int, value: Decimal): Unit = {
+    values(i).update(value)
+  }
+
+  def getList(i: Int): Seq[_] = {
+    values(i).boxed.asInstanceOf[Seq[Any]]
+  }
+
+  def setList(i: Int, value: Seq[_]): Unit = {
+    values(i).update(value)
+  }
+
+  def getMap(i: Int): Map[_, _] = {
+    values(i).boxed.asInstanceOf[Map[_, _]]
+  }
+
+  def setMap(i: Int, value: Map[_, _]): Unit = {
+    values(i).update(value)
+  }
+
+  def getRow(i: Int): Row = {
+    values(i).boxed.asInstanceOf[Row]
+  }
+
+  def setRow(i: Int, value: MutableRow): Unit = {
+    values(i).update(value)
   }
 }

@@ -21,11 +21,12 @@ import java.sql.{Date, Timestamp}
 
 import org.apache.spark.util.Utils
 import org.apache.spark.sql.catalyst.annotation.SQLUserDefinedType
-import org.apache.spark.sql.catalyst.expressions.{GenericRow, Attribute, AttributeReference, Row}
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.catalyst.types._
 import org.apache.spark.sql.catalyst.types.decimal.Decimal
 
+import scala.reflect.ClassTag
 
 /**
  * A default version of ScalaReflection that uses the runtime universe.
@@ -55,8 +56,8 @@ trait ScalaReflection {
    *       This ordering is important for UDT registration.
    */
   def convertToCatalyst(a: Any, dataType: DataType): Any = (a, dataType) match {
-    // Check UDT first since UDTs can override other types
-    case (obj, udt: UserDefinedType[_]) => udt.serialize(obj)
+    // Check UDT first since UDTs can override other types, TODO reuse the mutable row?
+    case (obj: UserDefinedData, udt: UserDefinedType) => udt.serialize(obj, null)
     case (o: Option[_], _) => o.map(convertToCatalyst(_, dataType)).orNull
     case (s: Seq[_], arrayType: ArrayType) => s.map(convertToCatalyst(_, arrayType.elementType))
     case (m: Map[_, _], mapType: MapType) => m.map { case (k, v) =>
@@ -67,22 +68,20 @@ trait ScalaReflection {
         p.productIterator.toSeq.zip(structType.fields).map { case (elem, field) =>
           convertToCatalyst(elem, field.dataType)
         }.toArray)
-    case (d: BigDecimal, _) => Decimal(d)
     case (other, _) => other
   }
 
   /** Converts Catalyst types used internally in rows to standard Scala types */
-  def convertToScala(a: Any, dataType: DataType): Any = (a, dataType) match {
+  def convertToScala(a: Any, dataType: DataType): Any = a //(a, dataType) match {
     // Check UDT first since UDTs can override other types
-    case (d, udt: UserDefinedType[_]) => udt.deserialize(d)
-    case (s: Seq[_], arrayType: ArrayType) => s.map(convertToScala(_, arrayType.elementType))
-    case (m: Map[_, _], mapType: MapType) => m.map { case (k, v) =>
-      convertToScala(k, mapType.keyType) -> convertToScala(v, mapType.valueType)
-    }
-    case (r: Row, s: StructType) => convertRowToScala(r, s)
-    case (d: Decimal, _: DecimalType) => d.toBigDecimal
-    case (other, _) => other
-  }
+//    case (d: Row, udt: UserDefinedType) => udt.deserialize(d)
+//    case (s: Seq[_], arrayType: ArrayType) => s.map(convertToScala(_, arrayType.elementType))
+//    case (m: Map[_, _], mapType: MapType) => m.map { case (k, v) =>
+//      convertToScala(k, mapType.keyType) -> convertToScala(v, mapType.valueType)
+//    }
+//    case (r: Row, s: StructType) => convertRowToScala(r, s)
+//    case (other, _) => other
+//  }
 
   def convertRowToScala(r: Row, schema: StructType): Row = {
     new GenericRow(
@@ -94,6 +93,62 @@ trait ScalaReflection {
   def attributesFor[T: TypeTag]: Seq[Attribute] = schemaFor[T] match {
     case Schema(s: StructType, _) =>
       s.fields.map(f => AttributeReference(f.name, f.dataType, f.nullable, f.metadata)())
+  }
+
+  /**
+   * Returns a catalyst data type fields for the given Scala Type using reflection
+   * Currently only Product or SQLUserDefinedType annotated classes is supported
+   */
+  def fieldFor[T: TypeTag]: Seq[StructField] = fieldFor(typeOf[T])
+
+  /**
+   * Returns a catalyst data type fields for the given Scala Type using reflection
+   * Currently only Product or SQLUserDefinedType annotated classes is supported
+   */
+  def fieldFor(tpe: `Type`): Seq[StructField] = {
+    val className: String = tpe.erasure.typeSymbol.asClass.fullName
+    tpe match {
+      case t if t <:< typeOf[Product] =>
+        val formalTypeArgs = t.typeSymbol.asClass.typeParams
+        val TypeRef(_, _, actualTypeArgs) = t
+        val constructorSymbol = t.member(nme.CONSTRUCTOR)
+        val params = if (constructorSymbol.isMethod) {
+          constructorSymbol.asMethod.paramss
+        } else {
+          // Find the primary constructor, and use its parameter ordering.
+          val primaryConstructorSymbol: Option[Symbol] =
+            constructorSymbol.asTerm.alternatives.find(
+              s => s.isMethod && s.asMethod.isPrimaryConstructor)
+          if (primaryConstructorSymbol.isEmpty) {
+            sys.error("Internal SQL error: Product object did not have a primary constructor.")
+          } else {
+            primaryConstructorSymbol.get.asMethod.paramss
+          }
+        }
+        params.head.map { p =>
+          val Schema(dataType, nullable) =
+            schemaFor(p.typeSignature.substituteTypes(formalTypeArgs, actualTypeArgs))
+          StructField(p.name.toString, dataType, nullable)
+        }
+
+      case t if Utils.classIsLoadable(className) &&
+        Utils.classForName(className).isAnnotationPresent(classOf[SQLUserDefinedType]) =>
+        // Note: We check for classIsLoadable above since Utils.classForName uses Java reflection,
+        //       whereas className is from Scala reflection.  This can make it hard to find classes
+        //       in some cases, such as when a class is enclosed in an object (in which case
+        //       Java appends a '$' to the object name but Scala does not).
+        DataType.fieldsFromString(Utils.classForName(className)
+          .getAnnotation(classOf[SQLUserDefinedType]).schema())
+    }
+  }
+
+  def udt[T <: UserDefinedData: ClassTag]: UserDefinedType = {
+    val udd = implicitly[ClassTag[T]].runtimeClass
+    if (udd.isAnnotationPresent(classOf[SQLUserDefinedType])) {
+      new UserDefinedType(udd.getCanonicalName)
+    } else {
+      sys.error(s"Couldn't find the [SQLUserDefinedType] annotation for ${udd.getCanonicalName}")
+    }
   }
 
   /** Returns a catalyst DataType and its nullability for the given Scala Type using reflection. */
@@ -109,34 +164,11 @@ trait ScalaReflection {
         //       whereas className is from Scala reflection.  This can make it hard to find classes
         //       in some cases, such as when a class is enclosed in an object (in which case
         //       Java appends a '$' to the object name but Scala does not).
-        val udt = Utils.classForName(className)
-          .getAnnotation(classOf[SQLUserDefinedType]).udt().newInstance()
-        Schema(udt, nullable = true)
+        Schema(new UserDefinedType(className), nullable = true)
       case t if t <:< typeOf[Option[_]] =>
         val TypeRef(_, _, Seq(optType)) = t
         Schema(schemaFor(optType).dataType, nullable = true)
-      case t if t <:< typeOf[Product] =>
-        val formalTypeArgs = t.typeSymbol.asClass.typeParams
-        val TypeRef(_, _, actualTypeArgs) = t
-        val constructorSymbol = t.member(nme.CONSTRUCTOR)
-        val params = if (constructorSymbol.isMethod) {
-          constructorSymbol.asMethod.paramss
-        } else {
-          // Find the primary constructor, and use its parameter ordering.
-          val primaryConstructorSymbol: Option[Symbol] = constructorSymbol.asTerm.alternatives.find(
-            s => s.isMethod && s.asMethod.isPrimaryConstructor)
-          if (primaryConstructorSymbol.isEmpty) {
-            sys.error("Internal SQL error: Product object did not have a primary constructor.")
-          } else {
-            primaryConstructorSymbol.get.asMethod.paramss
-          }
-        }
-        Schema(StructType(
-          params.head.map { p =>
-            val Schema(dataType, nullable) =
-              schemaFor(p.typeSignature.substituteTypes(formalTypeArgs, actualTypeArgs))
-            StructField(p.name.toString, dataType, nullable)
-          }), nullable = true)
+      case t if t <:< typeOf[Product] => Schema(StructType(fieldFor(tpe)), nullable = true)
       // Need to decide if we actually need a special type here.
       case t if t <:< typeOf[Array[Byte]] => Schema(BinaryType, nullable = true)
       case t if t <:< typeOf[Array[_]] =>
