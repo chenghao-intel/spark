@@ -388,7 +388,7 @@ case class DistinctAggregate(
               idx += 1
             }
           case None =>
-            val temp = new GenericMutableRow(bufferSchema.length)
+            val buffer = new GenericMutableRow(bufferSchema.length)
             // TODO save the memory only for those DISTINCT aggregate expressions
             val seens = new Array[mutable.HashSet[Any]](aggregateFunctionBinds.length)
 
@@ -397,8 +397,8 @@ case class DistinctAggregate(
               val ae = aggregates(idx)
               val af = functions(idx)
               val value = ae.eval(currentRow)
-              af.reset(temp)
-              af.iterate(value, temp)
+              af.reset(buffer)
+              af.iterate(value, buffer)
 
               if (ae.distinct) {
                 val seen = new mutable.HashSet[Any]()
@@ -410,7 +410,7 @@ case class DistinctAggregate(
 
               idx += 1
             }
-            results.put(keys, new KeyBufferSeens(currentRow, temp, seens))
+            results.put(keys, new KeyBufferSeens(keys, buffer, seens))
         }
       }
 
