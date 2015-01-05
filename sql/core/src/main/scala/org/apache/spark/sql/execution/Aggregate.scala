@@ -37,25 +37,25 @@ sealed case class AggregateFunctionBind(
     function: AggregateFunction,
     substitution: MutableLiteral)
 
-sealed class KeyBufferSeens(
-    var key: Row, //
+sealed class InputBufferSeens(
+    var input: Row, //
     var buffer: MutableRow,
     var seens: Array[mutable.HashSet[Any]] = null) {
   def this() {
     this(null, null)
   }
 
-  def withKey(row: Row): KeyBufferSeens = {
-    this.key = row
+  def withInput(row: Row): InputBufferSeens = {
+    this.input = row
     this
   }
 
-  def withBuffer(row: MutableRow): KeyBufferSeens = {
+  def withBuffer(row: MutableRow): InputBufferSeens = {
     this.buffer = row
     this
   }
 
-  def withSeens(seens: Array[mutable.HashSet[Any]]): KeyBufferSeens = {
+  def withSeens(seens: Array[mutable.HashSet[Any]]): InputBufferSeens = {
     this.seens = seens
     this
   }
@@ -153,10 +153,12 @@ sealed trait PostShuffle extends Aggregate {
 
   def aggregateFunctionBinds: Seq[AggregateFunctionBind]
 
-  def appendNullRow(
+  private def handleGlobalEmptyAggregation(
       functions: Seq[AggregateFunction],
-      results: mutable.HashMap[Row, KeyBufferSeens]) {
-    if (isGlobalAggregation && results.isEmpty) {
+      iterator: Iterator[InputBufferSeens]): Iterator[InputBufferSeens] = {
+    if (isGlobalAggregation && iterator.isEmpty) {
+      // If it's global aggregation(without the group by expression)
+      // and also with empty aggregate output, then append a null row
       val currentRow = new GenericRow(childOutput.size)
       val buffer = new GenericMutableRow(bufferSchema.length)
       var idx = 0
@@ -165,13 +167,16 @@ sealed trait PostShuffle extends Aggregate {
         af.reset(buffer)
         idx += 1
       }
-      results.put(Row(0), new KeyBufferSeens(currentRow, buffer))
+      Iterator(new InputBufferSeens(currentRow, buffer))
+    } else {
+      iterator
     }
   }
 
-  def createIterator(iterator: Iterator[KeyBufferSeens]) = {
-    val functions = aggregateFunctionBinds.map(_.function)
+  def createIterator(functions: Seq[AggregateFunction], it: Iterator[InputBufferSeens]) = {
     val substitutions = aggregateFunctionBinds.map(_.substitution)
+
+    val iterator = handleGlobalEmptyAggregation(functions, it)
 
     new Iterator[Row] {
       override final def hasNext: Boolean = iterator.hasNext
@@ -187,7 +192,7 @@ sealed trait PostShuffle extends Aggregate {
           idx += 1
         }
 
-        finalProjection(keybuffer.key)
+        finalProjection(keybuffer.input)
       }
     }
   }
@@ -221,9 +226,8 @@ case class AggregatePreShuffle(
    * Create Iterator for the in-memory hash map.
    */
   private[this] def createIterator(
-      iterator: Iterator[KeyBufferSeens]) = {
-    val functions = aggregateFunctionBinds.map(_.function)
-
+      functions: Seq[AggregateFunction],
+      iterator: Iterator[InputBufferSeens]) = {
     new Iterator[Row] {
       private[this] val joinedRow = new JoinedRow
 
@@ -238,7 +242,7 @@ case class AggregatePreShuffle(
           idx += 1
         }
 
-        joinedRow(keybuffer.buffer, keybuffer.key).copy()
+        joinedRow(keybuffer.buffer, keybuffer.input).copy()
       }
     }
   }
@@ -247,20 +251,19 @@ case class AggregatePreShuffle(
     child.execute().mapPartitions { iter =>
       val functions = aggregateFunctionBinds.map(_.function)
       val aggregates = aggregateFunctionBinds.map(_.aggregate)
-      val results = new mutable.HashMap[Row, MutableRow]()
-      val keybuffer = new KeyBufferSeens()
+      val results = new mutable.HashMap[Row, InputBufferSeens]()
 
       while (iter.hasNext) {
         val currentRow = iter.next()
 
         val keys = groupByProjection(currentRow)
         results.get(keys) match {
-          case Some(group) =>
+          case Some(inputbuffer) =>
             var idx = 0
             while (idx < functions.length) {
               val af = functions(idx)
               val ae = aggregates(idx)
-              af.iterate(ae.eval(currentRow), group)
+              af.iterate(ae.eval(currentRow), inputbuffer.buffer)
               idx += 1
             }
           case None =>
@@ -278,14 +281,11 @@ case class AggregatePreShuffle(
               idx += 1
             }
 
-            results.put(keys, new GenericMutableRow(buffer.toArray))
+            results.put(keys, new InputBufferSeens(keys, new GenericMutableRow(buffer.toArray)))
         }
       }
 
-      // TODO maybe too expensive
-      createIterator(results.iterator.map {
-        case (key, buffer) => keybuffer.withKey(key).withBuffer(buffer)
-      })
+      createIterator(functions, results.valuesIterator)
     }
   }
 }
@@ -308,7 +308,7 @@ case class AggregatePostShuffle(
   override def execute() = attachTree(this, "execute") {
     child.execute().mapPartitions { iter =>
       val functions = aggregateFunctionBinds.map(_.function)
-      val results = new mutable.HashMap[Row, KeyBufferSeens]()
+      val results = new mutable.HashMap[Row, InputBufferSeens]()
 
       while (iter.hasNext) {
         val currentRow = iter.next()
@@ -330,13 +330,11 @@ case class AggregatePostShuffle(
               af.merge(currentRow, buffer)
               idx += 1
             }
-            results.put(keys, new KeyBufferSeens(currentRow, buffer))
+            results.put(keys, new InputBufferSeens(currentRow.copy(), buffer))
         }
       }
 
-      appendNullRow(functions, results)
-
-      createIterator(results.valuesIterator)
+      createIterator(functions, results.valuesIterator)
     }
   }
 }
@@ -363,14 +361,14 @@ case class DistinctAggregate(
     child.execute().mapPartitions { iter =>
       val functions = aggregateFunctionBinds.map(_.function)
       val aggregates = aggregateFunctionBinds.map(_.aggregate)
-      val results = new mutable.HashMap[Row, KeyBufferSeens]()
+      val results = new mutable.HashMap[Row, InputBufferSeens]()
 
       while (iter.hasNext) {
         val currentRow = iter.next()
 
         val keys = groupByProjection(currentRow)
         results.get(keys) match {
-          case Some(keyBufferSeens) =>
+          case Some(inputBufferSeens) =>
             var idx = 0
             while (idx < aggregateFunctionBinds.length) {
               val ae = aggregates(idx)
@@ -378,12 +376,12 @@ case class DistinctAggregate(
               val value = ae.eval(currentRow)
 
               if (ae.distinct) {
-                if (!keyBufferSeens.seens(idx).contains(value)) {
-                  af.iterate(value, keyBufferSeens.buffer)
-                  keyBufferSeens.seens(idx).add(value)
+                if (!inputBufferSeens.seens(idx).contains(value)) {
+                  af.iterate(value, inputBufferSeens.buffer)
+                  inputBufferSeens.seens(idx).add(value)
                 }
               } else {
-                af.iterate(value, keyBufferSeens.buffer)
+                af.iterate(value, inputBufferSeens.buffer)
               }
               idx += 1
             }
@@ -410,12 +408,11 @@ case class DistinctAggregate(
 
               idx += 1
             }
-            results.put(keys, new KeyBufferSeens(keys, buffer, seens))
+            results.put(keys, new InputBufferSeens(currentRow.copy(), buffer, seens))
         }
       }
 
-      appendNullRow(functions, results)
-      createIterator(results.valuesIterator)
+      createIterator(functions, results.valuesIterator)
     }
   }
 }
