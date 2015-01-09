@@ -28,13 +28,11 @@ import org.apache.spark.sql.catalyst.plans.physical._
  * An aggregate that needs to be computed for each row in a group.
  *
  * @param aggregate AggregateExpression, associated with the function
- * @param function Function of this aggregate used to process the aggregation.
  * @param substitution A MutableLiteral used to refer to the result of this aggregate in the final
  *                        output.
  */
 sealed case class AggregateFunctionBind(
     aggregate: AggregateExpression,
-    function: AggregateFunction,
     substitution: MutableLiteral)
 
 sealed class InputBufferSeens(
@@ -95,16 +93,16 @@ sealed trait Aggregate {
       // we connect all of the aggregation buffers in a single Row,
       // and "BIND" the attribute references in a Hack way.
       val bufferDataTypes = ae.bufferDataType
-      val f = ae.newInstance(for (i <- 0 until bufferDataTypes.length) yield {
+      ae.initialBoundReference(for (i <- 0 until bufferDataTypes.length) yield {
         BoundReference(pos + i, bufferDataTypes(i), true)
       })
       pos += bufferDataTypes.length
 
-      AggregateFunctionBind(ae, f, MutableLiteral(null, ae.dataType))
+      AggregateFunctionBind(ae, MutableLiteral(null, ae.dataType))
     }
   }
 
-  def groupByProjection = if (groupingExpressions.isEmpty) {
+  @transient lazy val groupByProjection = if (groupingExpressions.isEmpty) {
     InterpretedMutableProjection(Nil)
   } else {
     new InterpretedMutableProjection(groupingExpressions, childOutput)
@@ -154,7 +152,7 @@ sealed trait PostShuffle extends Aggregate {
   def aggregateFunctionBinds: Seq[AggregateFunctionBind]
 
   private def handleGlobalEmptyAggregation(
-      functions: Seq[AggregateFunction],
+      aggregates: Seq[AggregateExpression],
       iterator: Iterator[InputBufferSeens]): Iterator[InputBufferSeens] = {
     if (isGlobalAggregation && iterator.isEmpty) {
       // If it's global aggregation(without the group by expression)
@@ -162,9 +160,9 @@ sealed trait PostShuffle extends Aggregate {
       val currentRow = new GenericRow(childOutput.size)
       val buffer = new GenericMutableRow(bufferSchema.length)
       var idx = 0
-      while (idx < functions.length) {
-        val af = functions(idx)
-        af.reset(buffer)
+      while (idx < aggregates.length) {
+        val ae = aggregates(idx)
+        ae.reset(buffer)
         idx += 1
       }
       Iterator(new InputBufferSeens(currentRow, buffer))
@@ -173,10 +171,10 @@ sealed trait PostShuffle extends Aggregate {
     }
   }
 
-  def createIterator(functions: Seq[AggregateFunction], it: Iterator[InputBufferSeens]) = {
+  def createIterator(aggregates: Seq[AggregateExpression], it: Iterator[InputBufferSeens]) = {
     val substitutions = aggregateFunctionBinds.map(_.substitution)
 
-    val iterator = handleGlobalEmptyAggregation(functions, it)
+    val iterator = handleGlobalEmptyAggregation(aggregates, it)
 
     new Iterator[Row] {
       override final def hasNext: Boolean = iterator.hasNext
@@ -185,10 +183,10 @@ sealed trait PostShuffle extends Aggregate {
         val keybuffer = iterator.next()
 
         var idx = 0
-        while (idx < functions.length) {
+        while (idx < aggregates.length) {
           // substitute the AggregateExpression value
-          val af = functions(idx)
-          substitutions(idx).value = af.terminate(keybuffer.buffer)
+          val ae = aggregates(idx)
+          substitutions(idx).value = ae.terminate(keybuffer.buffer)
           idx += 1
         }
 
@@ -226,7 +224,7 @@ case class AggregatePreShuffle(
    * Create Iterator for the in-memory hash map.
    */
   private[this] def createIterator(
-      functions: Seq[AggregateFunction],
+      functions: Seq[AggregateExpression],
       iterator: Iterator[InputBufferSeens]) = {
     new Iterator[Row] {
       private[this] val joinedRow = new JoinedRow
@@ -249,7 +247,6 @@ case class AggregatePreShuffle(
 
   override def execute() = attachTree(this, "execute") {
     child.execute().mapPartitions { iter =>
-      val functions = aggregateFunctionBinds.map(_.function)
       val aggregates = aggregateFunctionBinds.map(_.aggregate)
       val results = new mutable.HashMap[Row, InputBufferSeens]()
 
@@ -260,32 +257,31 @@ case class AggregatePreShuffle(
         results.get(keys) match {
           case Some(inputbuffer) =>
             var idx = 0
-            while (idx < functions.length) {
-              val af = functions(idx)
+            while (idx < aggregates.length) {
               val ae = aggregates(idx)
-              af.iterate(ae.eval(currentRow), inputbuffer.buffer)
+              ae.iterate(ae.eval(currentRow), inputbuffer.buffer)
               idx += 1
             }
           case None =>
             val buffer = new GenericMutableRow(bufferSchema.length)
             var idx = 0
-            while (idx < functions.length) {
-              val af = functions(idx)
+            while (idx < aggregates.length) {
               val ae = aggregates(idx)
               val value = ae.eval(currentRow)
               // TODO distinctLike? We need to store the "seen" for
               // AggregationExpression that distinctLike=true
               // This is a trade off between memory & computing
-              af.reset(buffer)
-              af.iterate(value, buffer)
+              ae.reset(buffer)
+              ae.iterate(value, buffer)
               idx += 1
             }
 
-            results.put(keys, new InputBufferSeens(keys, new GenericMutableRow(buffer.toArray)))
+            val copies = keys.copy()
+            results.put(copies, new InputBufferSeens(copies, buffer))
         }
       }
 
-      createIterator(functions, results.valuesIterator)
+      createIterator(aggregates, results.valuesIterator)
     }
   }
 }
@@ -307,7 +303,7 @@ case class AggregatePostShuffle(
 
   override def execute() = attachTree(this, "execute") {
     child.execute().mapPartitions { iter =>
-      val functions = aggregateFunctionBinds.map(_.function)
+      val aggregates = aggregateFunctionBinds.map(_.aggregate)
       val results = new mutable.HashMap[Row, InputBufferSeens]()
 
       while (iter.hasNext) {
@@ -316,25 +312,25 @@ case class AggregatePostShuffle(
         results.get(keys) match {
           case Some(pair) =>
             var idx = 0
-            while (idx < functions.length) {
-              val af = functions(idx)
-              af.merge(currentRow, pair.buffer)
+            while (idx < aggregates.length) {
+              val ae = aggregates(idx)
+              ae.merge(currentRow, pair.buffer)
               idx += 1
             }
           case None =>
             val buffer = new GenericMutableRow(bufferSchema.length)
             var idx = 0
-            while (idx < functions.length) {
-              val af = functions(idx)
-              af.reset(buffer)
-              af.merge(currentRow, buffer)
+            while (idx < aggregates.length) {
+              val ae = aggregates(idx)
+              ae.reset(buffer)
+              ae.merge(currentRow, buffer)
               idx += 1
             }
-            results.put(keys, new InputBufferSeens(currentRow.copy(), buffer))
+            results.put(keys.copy(), new InputBufferSeens(currentRow.copy(), buffer))
         }
       }
 
-      createIterator(functions, results.valuesIterator)
+      createIterator(aggregates, results.valuesIterator)
     }
   }
 }
@@ -359,7 +355,6 @@ case class DistinctAggregate(
 
   override def execute() = attachTree(this, "execute") {
     child.execute().mapPartitions { iter =>
-      val functions = aggregateFunctionBinds.map(_.function)
       val aggregates = aggregateFunctionBinds.map(_.aggregate)
       val results = new mutable.HashMap[Row, InputBufferSeens]()
 
@@ -372,16 +367,15 @@ case class DistinctAggregate(
             var idx = 0
             while (idx < aggregateFunctionBinds.length) {
               val ae = aggregates(idx)
-              val af = functions(idx)
               val value = ae.eval(currentRow)
 
               if (ae.distinct) {
                 if (!inputBufferSeens.seens(idx).contains(value)) {
-                  af.iterate(value, inputBufferSeens.buffer)
+                  ae.iterate(value, inputBufferSeens.buffer)
                   inputBufferSeens.seens(idx).add(value)
                 }
               } else {
-                af.iterate(value, inputBufferSeens.buffer)
+                ae.iterate(value, inputBufferSeens.buffer)
               }
               idx += 1
             }
@@ -393,10 +387,9 @@ case class DistinctAggregate(
             var idx = 0
             while (idx < aggregateFunctionBinds.length) {
               val ae = aggregates(idx)
-              val af = functions(idx)
               val value = ae.eval(currentRow)
-              af.reset(buffer)
-              af.iterate(value, buffer)
+              ae.reset(buffer)
+              ae.iterate(value, buffer)
 
               if (ae.distinct) {
                 val seen = new mutable.HashSet[Any]()
@@ -408,11 +401,11 @@ case class DistinctAggregate(
 
               idx += 1
             }
-            results.put(keys, new InputBufferSeens(currentRow.copy(), buffer, seens))
+            results.put(keys.copy(), new InputBufferSeens(currentRow.copy(), buffer, seens))
         }
       }
 
-      createIterator(functions, results.valuesIterator)
+      createIterator(aggregates, results.valuesIterator)
     }
   }
 }

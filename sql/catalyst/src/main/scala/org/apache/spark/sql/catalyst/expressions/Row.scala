@@ -53,7 +53,6 @@ object Row {
  */
 trait Row extends Seq[Any] with Serializable {
   def apply(i: Int): Any
-
   def isNullAt(i: Int): Boolean
 
   def getInt(i: Int): Int
@@ -80,6 +79,18 @@ trait Row extends Seq[Any] with Serializable {
     }
     false
   }
+
+  final def apply(bound: BoundReference): Any = apply(bound.ordinal)
+  final def isNullAt(bound: BoundReference): Boolean = isNullAt(bound.ordinal)
+  final def getInt(bound: BoundReference): Int = getInt(bound.ordinal)
+  final def getLong(bound: BoundReference): Long = getLong(bound.ordinal)
+  final def getDouble(bound: BoundReference): Double = getDouble(bound.ordinal)
+  final def getBoolean(bound: BoundReference): Boolean = getBoolean(bound.ordinal)
+  final def getShort(bound: BoundReference): Short = getShort(bound.ordinal)
+  final def getByte(bound: BoundReference): Byte = getByte(bound.ordinal)
+  final def getFloat(bound: BoundReference): Float = getFloat(bound.ordinal)
+  final def getString(bound: BoundReference): String = getString(bound.ordinal)
+  final def getAs[T](bound: BoundReference): T = getAs[T](bound.ordinal)
 }
 
 /**
@@ -90,7 +101,6 @@ trait MutableRow extends Row {
   def setNullAt(i: Int): Unit
 
   def update(ordinal: Int, value: Any)
-
   def setInt(ordinal: Int, value: Int)
   def setLong(ordinal: Int, value: Long)
   def setDouble(ordinal: Int, value: Double)
@@ -99,6 +109,16 @@ trait MutableRow extends Row {
   def setByte(ordinal: Int, value: Byte)
   def setFloat(ordinal: Int, value: Float)
   def setString(ordinal: Int, value: String)
+
+  final def update(bound: BoundReference, value: Any) { update(bound.ordinal, value) }
+  final def setInt(bound: BoundReference, value: Int) { setInt(bound.ordinal, value) }
+  final def setLong(bound: BoundReference, value: Long) { setLong(bound.ordinal, value) }
+  final def setDouble(bound: BoundReference, value: Double) { setDouble(bound.ordinal, value) }
+  final def setBoolean(bound: BoundReference, value: Boolean) { setBoolean(bound.ordinal, value) }
+  final def setShort(bound: BoundReference, value: Short) { setShort(bound.ordinal, value) }
+  final def setByte(bound: BoundReference, value: Byte) { setByte(bound.ordinal, value) }
+  final def setFloat(bound: BoundReference, value: Float) { setFloat(bound.ordinal, value) }
+  final def setString(bound: BoundReference, value: String) { setString(bound.ordinal, value) }
 }
 
 /**

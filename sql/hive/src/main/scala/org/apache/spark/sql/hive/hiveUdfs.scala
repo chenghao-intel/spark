@@ -193,7 +193,8 @@ private[hive] case class HiveGenericUdaf(
   type UDFType = AbstractGenericUDAFResolver
 
   // Hive UDAF evaluator
-  def evaluator = resolver.getEvaluator(
+  @transient
+  lazy val evaluator = resolver.getEvaluator(
     new SimpleGenericUDAFParameterInfo(inspectors, false, false))
 
   @transient
@@ -212,9 +213,6 @@ private[hive] case class HiveGenericUdaf(
   @transient
   lazy val inspectors = children.map(toInspector).toArray
 
-  // Output data type
-  override def dataType: DataType = inspectorToDataType(objectInspector)
-
   // Aggregation Buffer Inspector
   @transient
   lazy val bufferObjectInspector = evaluator.init(GenericUDAFEvaluator.Mode.PARTIAL1, inspectors)
@@ -224,15 +222,70 @@ private[hive] case class HiveGenericUdaf(
     val annotation = evaluator.getClass().getAnnotation(classOf[HiveUDFType])
     if (annotation == null || !annotation.distinctLike()) false else true
   }
+  override def toString = s"$nodeName#${funcWrapper.functionClassName}(${children.mkString(",")})"
 
   // Aggregation Buffer Data Type, We assume only 1 element for the Hive Aggregation Buffer
   // It will be StructType if more than 1 element (Actually will be StructSettableObjectInspector)
   override def bufferDataType: Seq[DataType] = inspectorToDataType(bufferObjectInspector) :: Nil
 
-  override def newInstance(buffers: Seq[BoundReference]): AggregateFunction =
-    new HiveUdafFunction(buffers(0), this)
+  // Output data type
+  override def dataType: DataType = inspectorToDataType(objectInspector)
 
-  override def toString = s"$nodeName#${funcWrapper.functionClassName}(${children.mkString(",")})"
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  //            The following code will be called within the executors                         //
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  @transient var bound: BoundReference = _
+
+  override def initialBoundReference(buffers: Seq[BoundReference]) = {
+    bound = buffers(0)
+    mode match {
+      case FINAL => evaluator.init(GenericUDAFEvaluator.Mode.FINAL, Array(bufferObjectInspector))
+      case COMPLETE => evaluator.init(GenericUDAFEvaluator.Mode.COMPLETE, inspectors)
+      case PARTIAL1 => evaluator.init(GenericUDAFEvaluator.Mode.PARTIAL1, inspectors)
+    }
+  }
+
+  // Initialize (reinitialize) the aggregation buffer
+  override def reset(buf: MutableRow): Unit = {
+    val buffer = evaluator.getNewAggregationBuffer
+      .asInstanceOf[GenericUDAFEvaluator.AbstractAggregationBuffer]
+    evaluator.reset(buffer)
+    // This is a hack, we never use the mutable row as buffer, but define our own buffer,
+    // which is set as the first element of the buffer
+    buf(bound) = buffer
+  }
+
+  // Expect the aggregate function fills the aggregation buffer when fed with each value
+  // in the group
+  override def iterate(arguments: Any, buf: MutableRow): Unit = {
+    val args = arguments.asInstanceOf[Seq[AnyRef]].zip(inspectors).map {
+      case (value, oi) => wrap(value, oi)
+    }.toArray
+
+    evaluator.iterate(
+      buf.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal),
+      args)
+  }
+
+  // Merge 2 aggregation buffer, and write back to the later one
+  override def merge(value: Row, buf: MutableRow): Unit = {
+    val buffer = buf.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal)
+    evaluator.merge(buffer, wrap(value.get(bound.ordinal), bufferObjectInspector))
+  }
+
+  @deprecated
+  override def terminatePartial(buf: MutableRow): Unit = {
+    val buffer = buf.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal)
+    // this is for serialization
+    buf(bound) = unwrap(evaluator.terminatePartial(buffer), bufferObjectInspector)
+  }
+
+  // Output the final result by feeding the aggregation buffer
+  override def terminate(input: Row): Any = {
+    unwrap(evaluator.terminate(
+      input.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal)),
+      objectInspector)
+  }
 }
 
 /**
@@ -311,66 +364,5 @@ private[hive] case class HiveGenericUdtf(
   }
 
   override def toString = s"$nodeName#${funcWrapper.functionClassName}(${children.mkString(",")})"
-}
-
-private[hive] case class HiveUdafFunction(
-    bound: BoundReference,
-    base: HiveGenericUdaf)
-  extends AggregateFunction
-  with HiveInspectors {
-
-  private val function = {
-    val f = base.evaluator
-    base.mode match {
-      case FINAL => f.init(GenericUDAFEvaluator.Mode.FINAL, Array(base.bufferObjectInspector))
-      case COMPLETE => f.init(GenericUDAFEvaluator.Mode.COMPLETE, base.inspectors)
-      case PARTIAL1 => f.init(GenericUDAFEvaluator.Mode.PARTIAL1, base.inspectors)
-    }
-
-    f
-  }
-
-  // Initialize (reinitialize) the aggregation buffer
-  override def reset(buf: MutableRow): Unit = {
-    val buffer = function.getNewAggregationBuffer
-      .asInstanceOf[GenericUDAFEvaluator.AbstractAggregationBuffer]
-    function.reset(buffer)
-    // This is a hack, we never use the mutable row as buffer, but define our own buffer,
-    // which is set as the first element of the buffer
-    buf.update(bound.ordinal, buffer)
-  }
-
-  // Expect the aggregate function fills the aggregation buffer when fed with each value
-  // in the group
-  override def iterate(arguments: Any, buf: MutableRow): Unit = {
-    val args = arguments.asInstanceOf[Seq[AnyRef]].zip(base.inspectors).map {
-      case (value, oi) => wrap(value, oi)
-    }.toArray
-
-    function.iterate(
-      buf.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal),
-      args)
-  }
-
-  // Merge 2 aggregation buffer, and write back to the later one
-  override def merge(value: Row, buf: MutableRow): Unit = {
-    val buffer = buf.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal)
-    function.merge(buffer, wrap(value.get(bound.ordinal), base.bufferObjectInspector))
-  }
-
-  @deprecated
-  override def terminatePartial(buf: MutableRow): Unit = {
-    val buffer = buf.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal)
-    buf.update(bound.ordinal,
-      unwrap(function.terminatePartial(buffer),
-      base.bufferObjectInspector)) // this is for serialization
-  }
-
-  // Output the final result by feeding the aggregation buffer
-  override def terminate(input: Row): Any = {
-    unwrap(function.terminate(
-      input.getAs[GenericUDAFEvaluator.AbstractAggregationBuffer](bound.ordinal)),
-      base.objectInspector)
-  }
 }
 

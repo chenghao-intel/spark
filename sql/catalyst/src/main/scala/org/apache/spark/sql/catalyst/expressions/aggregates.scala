@@ -57,10 +57,13 @@ case object COMPLETE extends Mode
 
 /**
  * Aggregation Function Interface
- * It's created by AggregateExpression
+ * All of the function will be called within Spark executors.
  */
 trait AggregateFunction {
   self: Product =>
+
+  // Specify the BoundReference for Aggregate Buffer
+  def initialBoundReference(buffers: Seq[BoundReference]): Unit
 
   // Initialize (reinitialize) the aggregation buffer
   def reset(buf: MutableRow): Unit
@@ -79,14 +82,9 @@ trait AggregateFunction {
 
   // Output the final result by feeding the aggregation buffer
   def terminate(input: Row): Any
-
-  // AggregateExpression associated with this AggregateFunction
-  def base: AggregateExpression
-
-  def eval(row: Row): Any = base.eval(row)
 }
 
-trait AggregateExpression extends Expression {
+trait AggregateExpression extends Expression with AggregateFunction {
   self: Product =>
   type EvaluatedType = Any
 
@@ -96,14 +94,12 @@ trait AggregateExpression extends Expression {
     this.mode = m
   }
 
-  // Create the AggregateFunction, by specified the schema (as BoundReference)
-  def newInstance(buffers: Seq[BoundReference]): AggregateFunction = null
   // Aggregation Buffer data types
   def bufferDataType: Seq[DataType] = Nil
   // Is it a distinct aggregate expression?
   def distinct: Boolean
   // Is it a distinct like aggregate expression (e.g. Min/Max is distinctLike, while avg is not)
-  def distinctLike: Boolean = false  // TODO we are not using this hint yet, remove it for now?
+  def distinctLike: Boolean = false
 
   def nullable = true
 
@@ -122,10 +118,49 @@ case class Min(
     override val distinctLike: Boolean = true)
   extends UnaryAggregateExpression {
 
-  override def toString = s"MIN($child)"
   override def dataType = child.dataType
   override def bufferDataType: Seq[DataType] = dataType :: Nil
-  override def newInstance(buffers: Seq[BoundReference]) = MinFunction(buffers(0), this)
+  override def toString = s"MIN($child)"
+
+  /* The below code will be called in executors, be sure to make the instance transientable */
+  @transient var arg: MutableLiteral = _
+  @transient var buffer: MutableLiteral = _
+  @transient var cmp: LessThan = _
+  @transient var aggr: BoundReference = _
+
+  /* Initialization on executors */
+  override def initialBoundReference(buffers: Seq[BoundReference]): Unit = {
+    aggr = buffers(0)
+    arg = MutableLiteral(null, dataType)
+    buffer = MutableLiteral(null, dataType)
+    cmp = LessThan(arg, buffer)
+  }
+
+  override def reset(buf: MutableRow): Unit = {
+    buf(aggr) = null
+  }
+
+  override def iterate(argument: Any, buf: MutableRow): Unit = {
+    if (argument != null) {
+      arg.value = argument
+      buffer.value = buf(aggr)
+      if (buf.isNullAt(aggr) || cmp.eval(null) == true) {
+        buf(aggr) = argument
+      }
+    }
+  }
+
+  override def merge(value: Row, rowBuf: MutableRow): Unit = {
+    if (!value.isNullAt(aggr)) {
+      arg.value = value(aggr)
+      buffer.value = rowBuf(aggr)
+      if (rowBuf.isNullAt(aggr) || cmp.eval(null) == true) {
+        rowBuf(aggr) = arg.value
+      }
+    }
+  }
+
+  override def terminate(row: Row): Any = aggr.eval(row)
 }
 
 case class Average(child: Expression, distinct: Boolean = false)
@@ -141,21 +176,117 @@ case class Average(child: Expression, distinct: Boolean = false)
       DoubleType
   }
 
-  override def toString = s"AVG($child)"
   override def bufferDataType: Seq[DataType] = LongType :: dataType :: Nil
+  override def toString = s"AVG($child)"
 
-  override def newInstance(buffers: Seq[BoundReference]) =
-    AverageFunction(buffers(0), buffers(1), this)
+  /* The below code will be called in executors, be sure to mark the instance as transient */
+  @transient var count: BoundReference = _
+  @transient var sum: BoundReference = _
+
+  // for iterate
+  @transient var arg: MutableLiteral = _
+  @transient var cast: Expression = _
+  @transient var add: Add = _
+
+  // for merge
+  @transient var argInMerge: MutableLiteral = _
+  @transient var addInMerge: Add = _
+
+  // for terminate
+  @transient var divide: Divide = _
+
+  /* Initialization on executors */
+  override def initialBoundReference(buffers: Seq[BoundReference]): Unit = {
+    count = buffers(0)
+    sum = buffers(1)
+
+    arg = MutableLiteral(null, child.dataType)
+    cast = if (arg.dataType != dataType) Cast(arg, dataType) else arg
+    add = Add(cast, sum)
+
+    argInMerge = MutableLiteral(null, dataType)
+    addInMerge = Add(argInMerge, sum)
+
+    divide = Divide(sum, Cast(count, dataType))
+  }
+
+  override def reset(buf: MutableRow): Unit = {
+    buf(count) = 0L
+    buf(sum) = null
+  }
+
+  override def iterate(argument: Any, buf: MutableRow): Unit = {
+    if (argument != null) {
+      arg.value = argument
+      buf(count) = buf.getLong(count) + 1
+      if (buf.isNullAt(sum)) {
+        buf(sum) = cast.eval()
+      } else {
+        buf(sum) = add.eval(buf)
+      }
+    }
+  }
+
+  override def merge(value: Row, buf: MutableRow): Unit = {
+    if (!value.isNullAt(sum)) {
+      buf(count) = value.getLong(count) + buf.getLong(count)
+      if (buf.isNullAt(sum)) {
+        buf(sum) = value(sum)
+      } else {
+        argInMerge.value = value(sum)
+        buf(sum) = addInMerge.eval(buf)
+      }
+    }
+  }
+
+  override def terminate(row: Row): Any = if (count.eval(row) == 0) null else divide.eval(row)
 }
 
 case class Max(child: Expression, distinct: Boolean = false)
   extends UnaryAggregateExpression {
   override def nullable = true
   override def dataType = child.dataType
+  override def bufferDataType: Seq[DataType] = dataType :: Nil
   override def toString = s"MAX($child)"
 
-  override def bufferDataType: Seq[DataType] = dataType :: Nil
-  override def newInstance(buffers: Seq[BoundReference]) = MaxFunction(buffers(0), this)
+  /* The below code will be called in executors, be sure to mark the instance as transient */
+  @transient var aggr: BoundReference = _
+  @transient var arg: MutableLiteral = _
+  @transient var buffer: MutableLiteral = _
+  @transient var cmp: GreaterThan = _
+
+  override def initialBoundReference(buffers: Seq[BoundReference]) = {
+    aggr = buffers(0)
+    arg = MutableLiteral(null, dataType)
+    buffer = MutableLiteral(null, dataType)
+    cmp = GreaterThan(arg, buffer)
+  }
+
+  override def reset(buf: MutableRow): Unit = {
+    buf(aggr) = null
+  }
+
+  override def iterate(argument: Any, buf: MutableRow): Unit = {
+    if (argument != null) {
+      arg.value = argument
+      buffer.value = buf(aggr)
+      if (buf.isNullAt(aggr) || cmp.eval(null) == true) {
+        buf(aggr) = argument
+      }
+    }
+  }
+
+  override def merge(value: Row, rowBuf: MutableRow): Unit = {
+    if (!value.isNullAt(aggr)) {
+      arg.value = value(aggr)
+      buffer.value = rowBuf(aggr)
+      if (rowBuf.isNullAt(aggr) || cmp.eval(null) == true) {
+        rowBuf(aggr) = arg.value
+      }
+    }
+  }
+
+  override def terminate(row: Row): Any = aggr.eval(row)
 }
 
 case class Count(child: Expression)
@@ -163,10 +294,41 @@ case class Count(child: Expression)
   def distinct: Boolean = false
   override def nullable = false
   override def dataType = LongType
+  override def bufferDataType: Seq[DataType] = LongType :: Nil
   override def toString = s"COUNT($child)"
 
-  override def bufferDataType: Seq[DataType] = LongType :: Nil
-  override def newInstance(buffers: Seq[BoundReference]) = CountFunction(buffers(0), this)
+  /* The below code will be called in executors, be sure to mark the instance as transient */
+  @transient var aggr: BoundReference = _
+
+  override def initialBoundReference(buffers: Seq[BoundReference]) = {
+    aggr = buffers(0)
+  }
+
+  override def reset(buf: MutableRow): Unit = {
+    buf(aggr) = 0L
+  }
+
+  override def iterate(argument: Any, buf: MutableRow): Unit = {
+    if (argument != null) {
+      if (buf.isNullAt(aggr)) {
+        buf(aggr) = 1L
+      } else {
+        buf(aggr) = buf.getLong(aggr) + 1L
+      }
+    }
+  }
+
+  override def merge(value: Row, rowBuf: MutableRow): Unit = {
+    if (value.isNullAt(aggr)) {
+      // do nothing
+    } else if (rowBuf.isNullAt(aggr)) {
+      rowBuf(aggr) = value(aggr)
+    } else {
+      rowBuf(aggr) = value.getLong(aggr) + rowBuf.getLong(aggr)
+    }
+  }
+
+  override def terminate(row: Row): Any = aggr.eval(row)
 }
 
 case class CountDistinct(children: Seq[Expression])
@@ -175,9 +337,41 @@ case class CountDistinct(children: Seq[Expression])
   override def nullable = false
   override def dataType = LongType
   override def toString = s"COUNT($children)"
-
   override def bufferDataType: Seq[DataType] = LongType :: Nil
-  override def newInstance(buffers: Seq[BoundReference]) = CountDistinctFunction(buffers(0), this)
+
+  /* The below code will be called in executors, be sure to mark the instance as transient */
+  @transient var aggr: BoundReference = _
+  override def initialBoundReference(buffers: Seq[BoundReference]) = {
+    aggr = buffers(0)
+  }
+
+  override def reset(buf: MutableRow): Unit = {
+    buf(aggr) = 0L
+  }
+
+  override def iterate(argument: Any, buf: MutableRow): Unit = {
+    if (!argument.asInstanceOf[Seq[_]].exists(_ == null)) {
+      // CountDistinct supports multiple expression, and ONLY IF
+      // none of its expressions value equals null
+      if (buf.isNullAt(aggr)) {
+        buf(aggr) = 1L
+      } else {
+        buf(aggr) = buf.getLong(aggr) + 1L
+      }
+    }
+  }
+
+  override def merge(value: Row, rowBuf: MutableRow): Unit = {
+    if (value.isNullAt(aggr)) {
+      // do nothing
+    } else if (rowBuf.isNullAt(aggr)) {
+      rowBuf(aggr) = value(aggr)
+    } else {
+      rowBuf(aggr) = value.getLong(aggr) + rowBuf.getLong(aggr)
+    }
+  }
+
+  override def terminate(row: Row): Any = aggr.eval(row)
 }
 
 case class Sum(child: Expression, distinct: Boolean = false)
@@ -192,273 +386,113 @@ case class Sum(child: Expression, distinct: Boolean = false)
       child.dataType
   }
 
+  override def bufferDataType: Seq[DataType] = dataType :: Nil
   override def toString = s"SUM($child)"
 
-  override def bufferDataType: Seq[DataType] = dataType :: Nil
-  override def newInstance(buffers: Seq[BoundReference]) = SumFunction(buffers(0), this)
+  /* The below code will be called in executors, be sure to mark the instance as transient */
+  @transient var aggr: BoundReference = _
+  @transient var arg: MutableLiteral = _
+  @transient var sum: Add = _
+
+  override def initialBoundReference(buffers: Seq[BoundReference]) = {
+    aggr = buffers(0)
+    arg = MutableLiteral(null, dataType)
+    sum = Add(arg, aggr)
+  }
+
+  override def reset(buf: MutableRow): Unit = {
+    buf(aggr) = null
+  }
+
+  override def iterate(argument: Any, buf: MutableRow): Unit = {
+    if (argument != null) {
+      if (buf.isNullAt(aggr)) {
+        buf(aggr) = argument
+      } else {
+        arg.value = argument
+        buf(aggr) = sum.eval(buf)
+      }
+    }
+  }
+
+  override def merge(value: Row, buf: MutableRow): Unit = {
+    if (!value.isNullAt(aggr)) {
+      arg.value = value(aggr)
+      if (buf.isNullAt(aggr)) {
+        buf(aggr) = arg.value
+      } else {
+        buf(aggr) = sum.eval(buf)
+      }
+    }
+  }
+
+  override def terminate(row: Row): Any = aggr.eval(row)
 }
 
 case class First(child: Expression, distinct: Boolean = false)
   extends UnaryAggregateExpression {
   override def nullable = true
   override def dataType = child.dataType
+  override def bufferDataType: Seq[DataType] = dataType :: Nil
   override def toString = s"FIRST($child)"
 
-  override def bufferDataType: Seq[DataType] = dataType :: Nil
-  override def newInstance(buffers: Seq[BoundReference]) = FirstFunction(buffers(0), this)
+  /* The below code will be called in executors, be sure to mark the instance as transient */
+  @transient var aggr: BoundReference = _
+
+  override def initialBoundReference(buffers: Seq[BoundReference]) = {
+    aggr = buffers(0)
+  }
+
+  override def reset(buf: MutableRow): Unit = {
+    buf(aggr) = null
+  }
+
+  override def iterate(argument: Any, buf: MutableRow): Unit = {
+    if (buf.isNullAt(aggr)) {
+      if (argument != null) {
+        buf(aggr) = argument
+      }
+    }
+  }
+
+  override def merge(value: Row, buf: MutableRow): Unit = {
+    if (buf.isNullAt(aggr)) {
+      if (!value.isNullAt(aggr)) {
+        buf(aggr) = value(aggr)
+      }
+    }
+  }
+
+  override def terminate(row: Row): Any = aggr.eval(row)
 }
 
 case class Last(child: Expression, distinct: Boolean = false)
   extends UnaryAggregateExpression {
   override def nullable = true
   override def dataType = child.dataType
+  override def bufferDataType: Seq[DataType] = dataType :: Nil
   override def toString = s"LAST($child)"
 
-  override def bufferDataType: Seq[DataType] = dataType :: Nil
-  override def newInstance(buffers: Seq[BoundReference]) = LastFunction(buffers(0), this)
-}
+  /* The below code will be called in executors, be sure to mark the instance as transient */
+  @transient var aggr: BoundReference = _
 
-case class MinFunction(aggr: BoundReference, base: Min) extends AggregateFunction {
-  val arg: MutableLiteral = MutableLiteral(null, base.dataType)
-  val buffer: MutableLiteral = MutableLiteral(null, base.dataType)
-  val cmp = LessThan(arg, buffer)
+  override def initialBoundReference(buffers: Seq[BoundReference]) = {
+    aggr = buffers(0)
+  }
 
   override def reset(buf: MutableRow): Unit = {
-    buf.update(aggr.ordinal, null)
+    buf(aggr) = null
   }
 
   override def iterate(argument: Any, buf: MutableRow): Unit = {
     if (argument != null) {
-      arg.value = argument
-      buffer.value = buf(aggr.ordinal)
-      if (buf.isNullAt(aggr.ordinal) || cmp.eval(null) == true) {
-        buf.update(aggr.ordinal, argument)
-      }
-    }
-  }
-
-  override def merge(value: Row, rowBuf: MutableRow): Unit = {
-    if (!value.isNullAt(aggr.ordinal)) {
-      arg.value = value(aggr.ordinal)
-      buffer.value = rowBuf(aggr.ordinal)
-      if (rowBuf.isNullAt(aggr.ordinal) || cmp.eval(null) == true) {
-        rowBuf.update(aggr.ordinal, arg.value)
-      }
-    }
-  }
-
-  override def terminate(row: Row): Any = aggr.eval(row)
-}
-
-case class AverageFunction(count: BoundReference, sum: BoundReference, base: Average)
-  extends AggregateFunction {
-  // for iterate
-  val arg = MutableLiteral(null, base.child.dataType)
-  val cast = if (arg.dataType != base.dataType) Cast(arg, base.dataType) else arg
-  val add = Add(cast, sum)
-
-  // for merge
-  val argInMerge = MutableLiteral(null, base.dataType)
-  val addInMerge = Add(argInMerge, sum)
-
-  // for terminate
-  val divide = Divide(sum, Cast(count, base.dataType))
-
-  override def reset(buf: MutableRow): Unit = {
-    buf.update(count.ordinal, 0L)
-    buf.update(sum.ordinal, null)
-  }
-
-  override def iterate(argument: Any, buf: MutableRow): Unit = {
-    if (argument != null) {
-      arg.value = argument
-      buf.update(count.ordinal, buf.getLong(count.ordinal) + 1)
-      if (buf.isNullAt(sum.ordinal)) {
-        buf.update(sum.ordinal, cast.eval())
-      } else {
-        buf.update(sum.ordinal, add.eval(buf))
-      }
+      buf(aggr) = argument
     }
   }
 
   override def merge(value: Row, buf: MutableRow): Unit = {
-    if (!value.isNullAt(sum.ordinal)) {
-      buf.setLong(count.ordinal, value.getLong(count.ordinal) + buf.getLong(count.ordinal))
-      if (buf.isNullAt(sum.ordinal)) {
-        buf.update(sum.ordinal, value(sum.ordinal))
-      } else {
-        argInMerge.value = value(sum.ordinal)
-        buf.update(sum.ordinal, addInMerge.eval(buf))
-      }
-    }
-  }
-
-  override def terminate(row: Row): Any = if (count.eval(row) == 0) null else divide.eval(row)
-}
-
-case class MaxFunction(aggr: BoundReference, base: Max) extends AggregateFunction {
-  val arg: MutableLiteral = MutableLiteral(null, base.dataType)
-  val buffer: MutableLiteral = MutableLiteral(null, base.dataType)
-  val cmp = GreaterThan(arg, buffer)
-
-  override def reset(buf: MutableRow): Unit = {
-    buf.update(aggr.ordinal, null)
-  }
-
-  override def iterate(argument: Any, buf: MutableRow): Unit = {
-    if (argument != null) {
-      arg.value = argument
-      buffer.value = buf(aggr.ordinal)
-      if (buf.isNullAt(aggr.ordinal) || cmp.eval(null) == true) {
-        buf.update(aggr.ordinal, argument)
-      }
-    }
-  }
-
-  override def merge(value: Row, rowBuf: MutableRow): Unit = {
-    if (!value.isNullAt(aggr.ordinal)) {
-      arg.value = value(aggr.ordinal)
-      buffer.value = rowBuf(aggr.ordinal)
-      if (rowBuf.isNullAt(aggr.ordinal) || cmp.eval(null) == true) {
-        rowBuf.update(aggr.ordinal, arg.value)
-      }
-    }
-  }
-
-  override def terminate(row: Row): Any = aggr.eval(row)
-}
-
-case class CountFunction(aggr: BoundReference, base: Count)
-    extends AggregateFunction {
-  override def reset(buf: MutableRow): Unit = {
-    buf.update(aggr.ordinal, 0L)
-  }
-
-  override def iterate(argument: Any, buf: MutableRow): Unit = {
-    if (argument != null) {
-      if (buf.isNullAt(aggr.ordinal)) {
-        buf.setLong(aggr.ordinal, 1L)
-      } else {
-        buf.update(aggr.ordinal, buf.getLong(aggr.ordinal) + 1L)
-      }
-    }
-  }
-
-  override def merge(value: Row, rowBuf: MutableRow): Unit = {
-    if (value.isNullAt(aggr.ordinal)) {
-      // do nothing
-    } else if (rowBuf.isNullAt(aggr.ordinal)) {
-      rowBuf(aggr.ordinal) = value(aggr.ordinal)
-    } else {
-      rowBuf.update(aggr.ordinal, value.getLong(aggr.ordinal) + rowBuf.getLong(aggr.ordinal))
-    }
-  }
-
-  override def terminate(row: Row): Any = aggr.eval(row)
-}
-
-case class CountDistinctFunction(aggr: BoundReference, base: CountDistinct)
-  extends AggregateFunction {
-  override def reset(buf: MutableRow): Unit = {
-    buf.update(aggr.ordinal, 0L)
-  }
-
-  override def iterate(argument: Any, buf: MutableRow): Unit = {
-    if (!argument.asInstanceOf[Seq[_]].exists(_ == null)) {
-      // CountDistinct supports multiple expression, and ONLY IF
-      // none of its expressions value equals null
-      if (buf.isNullAt(aggr.ordinal)) {
-        buf.setLong(aggr.ordinal, 1L)
-      } else {
-        buf.update(aggr.ordinal, buf.getLong(aggr.ordinal) + 1L)
-      }
-    }
-  }
-
-  override def merge(value: Row, rowBuf: MutableRow): Unit = {
-    if (value.isNullAt(aggr.ordinal)) {
-      // do nothing
-    } else if (rowBuf.isNullAt(aggr.ordinal)) {
-      rowBuf(aggr.ordinal) = value(aggr.ordinal)
-    } else {
-      rowBuf.update(aggr.ordinal, value.getLong(aggr.ordinal) + rowBuf.getLong(aggr.ordinal))
-    }
-  }
-
-  override def terminate(row: Row): Any = aggr.eval(row)
-}
-
-case class SumFunction(aggr: BoundReference, base: Sum) extends AggregateFunction {
-  val arg: MutableLiteral = MutableLiteral(null, base.dataType)
-  val sum = Add(arg, aggr)
-
-  override def reset(buf: MutableRow): Unit = {
-    buf.update(aggr.ordinal, null)
-  }
-
-  override def iterate(argument: Any, buf: MutableRow): Unit = {
-    if (argument != null) {
-      if (buf.isNullAt(aggr.ordinal)) {
-        buf.update(aggr.ordinal, argument)
-      } else {
-        arg.value = argument
-        buf.update(aggr.ordinal, sum.eval(buf))
-      }
-    }
-  }
-
-  override def merge(value: Row, buf: MutableRow): Unit = {
-    if (!value.isNullAt(aggr.ordinal)) {
-      arg.value = value(aggr.ordinal)
-      if (buf.isNullAt(aggr.ordinal)) {
-        buf.update(aggr.ordinal, arg.value)
-      } else {
-        buf.update(aggr.ordinal, sum.eval(buf))
-      }
-    }
-  }
-
-  override def terminate(row: Row): Any = aggr.eval(row)
-}
-
-case class FirstFunction(aggr: BoundReference, base: First) extends AggregateFunction {
-  override def reset(buf: MutableRow): Unit = {
-    buf.update(aggr.ordinal, null)
-  }
-
-  override def iterate(argument: Any, buf: MutableRow): Unit = {
-    if (buf.isNullAt(aggr.ordinal)) {
-      if (argument != null) {
-        buf.update(aggr.ordinal, argument)
-      }
-    }
-  }
-
-  override def merge(value: Row, buf: MutableRow): Unit = {
-    if (buf.isNullAt(aggr.ordinal)) {
-      if (!value.isNullAt(aggr.ordinal)) {
-        buf.update(aggr.ordinal, value(aggr.ordinal))
-      }
-    }
-  }
-
-  override def terminate(row: Row): Any = aggr.eval(row)
-}
-
-case class LastFunction(aggr: BoundReference, base: AggregateExpression) extends AggregateFunction {
-  override def reset(buf: MutableRow): Unit = {
-    buf.update(aggr.ordinal, null)
-  }
-
-  override def iterate(argument: Any, buf: MutableRow): Unit = {
-    if (argument != null) {
-      buf.update(aggr.ordinal, argument)
-    }
-  }
-
-  override def merge(value: Row, buf: MutableRow): Unit = {
-    if (!value.isNullAt(aggr.ordinal)) {
-      buf.update(aggr.ordinal, value(aggr.ordinal))
+    if (!value.isNullAt(aggr)) {
+      buf(aggr) = value(aggr)
     }
   }
 

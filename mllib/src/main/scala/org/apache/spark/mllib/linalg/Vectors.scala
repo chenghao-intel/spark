@@ -109,12 +109,12 @@ private[spark] class VectorUDT extends UserDefinedType[Vector] {
     val row = new GenericMutableRow(4)
     obj match {
       case sv: SparseVector =>
-        row.setByte(0, 0)
+        row.setByte(0, 0.toByte)
         row.setInt(1, sv.size)
         row.update(2, sv.indices.toSeq)
         row.update(3, sv.values.toSeq)
       case dv: DenseVector =>
-        row.setByte(0, 1)
+        row.setByte(0, 1.toByte)
         row.setNullAt(1)
         row.setNullAt(2)
         row.update(3, dv.values.toSeq)
