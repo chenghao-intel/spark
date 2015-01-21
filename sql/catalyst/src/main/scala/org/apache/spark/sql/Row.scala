@@ -19,7 +19,7 @@ package org.apache.spark.sql
 
 import scala.util.hashing.MurmurHash3
 
-import org.apache.spark.sql.catalyst.expressions.GenericRow
+import org.apache.spark.sql.catalyst.expressions.{BoundReference, GenericRow}
 
 
 object Row {
@@ -299,6 +299,49 @@ trait Row extends Serializable {
    * @throws ClassCastException when data type does not match.
    */
   def getAs[T](i: Int): T = apply(i).asInstanceOf[T]
+
+  /*********       TODO make the syntatic sugar it as API?     ***********************/
+  @inline
+  final def apply(bound: BoundReference): Any = apply(bound.ordinal)
+  @inline
+  final def isNullAt(bound: BoundReference): Boolean = isNullAt(bound.ordinal)
+  @inline
+  final def getInt(bound: BoundReference): Int = getInt(bound.ordinal)
+  @inline
+  final def getLong(bound: BoundReference): Long = getLong(bound.ordinal)
+  @inline
+  final def getDouble(bound: BoundReference): Double = getDouble(bound.ordinal)
+  @inline
+  final def getBoolean(bound: BoundReference): Boolean = getBoolean(bound.ordinal)
+  @inline
+  final def getShort(bound: BoundReference): Short = getShort(bound.ordinal)
+  @inline
+  final def getByte(bound: BoundReference): Byte = getByte(bound.ordinal)
+  @inline
+  final def getFloat(bound: BoundReference): Float = getFloat(bound.ordinal)
+  @inline
+  final def getString(bound: BoundReference): String = getString(bound.ordinal)
+  @inline
+  final def getAs[T](bound: BoundReference): T = getAs[T](bound.ordinal)
+  @inline
+  final def getDecimal(bound: BoundReference): java.math.BigDecimal = getDecimal(bound.ordinal)
+  @inline
+  final def getDate(bound: BoundReference): java.sql.Date = getDate(bound.ordinal)
+  @inline
+  final def getSeq[T](bound: BoundReference): Seq[T] = getSeq(bound.ordinal)
+  @inline
+  final def getList[T](bound: BoundReference): java.util.List[T] = getList(bound.ordinal)
+  @inline
+  final def getMap[K, V](bound: BoundReference): scala.collection.Map[K, V] = {
+    getMap(bound.ordinal)
+  }
+  @inline
+  final def getJavaMap[K, V](bound: BoundReference): java.util.Map[K, V] = {
+    getJavaMap(bound.ordinal)
+  }
+  @inline
+  final def getStruct(bound: BoundReference): Row = getStruct(bound.ordinal)
+  /*****************************************************************************************/
 
   override def toString(): String = s"[${this.mkString(",")}]"
 

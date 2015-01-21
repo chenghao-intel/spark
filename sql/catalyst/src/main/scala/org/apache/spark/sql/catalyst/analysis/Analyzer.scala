@@ -356,8 +356,8 @@ class Analyzer(catalog: Catalog,
     def apply(plan: LogicalPlan): LogicalPlan = plan transform {
       case q: LogicalPlan =>
         q transformExpressions {
-          case u @ UnresolvedFunction(name, children) if u.childrenResolved =>
-            registry.lookupFunction(name, children)
+          case u @ UnresolvedFunction(name, children, distinct) if u.childrenResolved =>
+            registry.lookupFunction(name, children, distinct)
         }
     }
   }

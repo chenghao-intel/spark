@@ -479,6 +479,7 @@ class SQLContext(@transient val sparkContext: SparkContext)
     def simpleString: String =
       s"""== Physical Plan ==
          |${stringOrError(executedPlan)}
+         |Code Generation: ${stringOrError(executedPlan.codegenEnabled)}
       """.stripMargin.trim
 
     override def toString: String =
