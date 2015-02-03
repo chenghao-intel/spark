@@ -82,7 +82,7 @@ case class GeneratedAggregate(
 
         AggregateEvaluation(currentCount :: Nil, initialValue :: Nil, updateFunction :: Nil, result)
 
-      case s @ Sum(expr) =>
+      case s @ Sum(expr, distinct) =>
         val calcType =
           expr.dataType match {
             case DecimalType.Fixed(_, _) =>
@@ -108,7 +108,7 @@ case class GeneratedAggregate(
 
         AggregateEvaluation(currentSum :: Nil, initialValue :: Nil, updateFunction :: Nil, result)
 
-      case a @ Average(expr) =>
+      case a @ Average(expr, distinct) =>
         val calcType =
           expr.dataType match {
             case DecimalType.Fixed(_, _) =>
@@ -153,7 +153,7 @@ case class GeneratedAggregate(
           result
         )
 
-      case m @ Max(expr) =>
+      case m @ Max(expr, distinct) =>
         val currentMax = AttributeReference("currentMax", expr.dataType, nullable = true)()
         val initialValue = Literal(null, expr.dataType)
         val updateMax = MaxOf(currentMax, expr)
@@ -163,29 +163,6 @@ case class GeneratedAggregate(
           initialValue :: Nil,
           updateMax :: Nil,
           currentMax)
-
-      case CollectHashSet(Seq(expr)) =>
-        val set = AttributeReference("hashSet", ArrayType(expr.dataType), nullable = false)()
-        val initialValue = NewSet(expr.dataType)
-        val addToSet = AddItemToSet(expr, set)
-
-        AggregateEvaluation(
-          set :: Nil,
-          initialValue :: Nil,
-          addToSet :: Nil,
-          set)
-
-      case CombineSetsAndCount(inputSet) =>
-        val ArrayType(inputType, _) = inputSet.dataType
-        val set = AttributeReference("hashSet", inputSet.dataType, nullable = false)()
-        val initialValue = NewSet(inputType)
-        val collectSets = CombineSets(set, inputSet)
-
-        AggregateEvaluation(
-          set :: Nil,
-          initialValue :: Nil,
-          collectSets :: Nil,
-          CountSet(set))
     }
 
     val computationSchema = computeFunctions.flatMap(_.schema)
