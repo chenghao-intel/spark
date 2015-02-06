@@ -48,10 +48,10 @@ class GroupedData protected[sql](df: DataFrameImpl, groupingExprs: Seq[Expressio
 
   private[this] def strToExpr(expr: String): (Expression => Expression) = {
     expr.toLowerCase match {
-      case "avg" | "average" | "mean" => Average
+      case "avg" | "average" | "mean" => Average(_, false)
       case "max" => Max
       case "min" => Min
-      case "sum" => Sum
+      case "sum" => Sum(_, false)
       case "count" | "size" => Count
     }
   }
@@ -148,7 +148,7 @@ class GroupedData protected[sql](df: DataFrameImpl, groupingExprs: Seq[Expressio
    * Compute the average value for each numeric columns for each group. This is an alias for `avg`.
    * The resulting [[DataFrame]] will also contain the grouping columns.
    */
-  def mean(): DataFrame = aggregateNumericColumns(Average)
+  def mean(): DataFrame = aggregateNumericColumns(Average(_, false))
 
   /**
    * Compute the max value for each numeric columns for each group.
@@ -160,7 +160,7 @@ class GroupedData protected[sql](df: DataFrameImpl, groupingExprs: Seq[Expressio
    * Compute the mean value for each numeric columns for each group.
    * The resulting [[DataFrame]] will also contain the grouping columns.
    */
-  def avg(): DataFrame = aggregateNumericColumns(Average)
+  def avg(): DataFrame = aggregateNumericColumns(Average(_, false))
 
   /**
    * Compute the min value for each numeric column for each group.
@@ -172,5 +172,5 @@ class GroupedData protected[sql](df: DataFrameImpl, groupingExprs: Seq[Expressio
    * Compute the sum for each numeric columns for each group.
    * The resulting [[DataFrame]] will also contain the grouping columns.
    */
-  def sum(): DataFrame = aggregateNumericColumns(Sum)
+  def sum(): DataFrame = aggregateNumericColumns(Sum(_, false))
 }

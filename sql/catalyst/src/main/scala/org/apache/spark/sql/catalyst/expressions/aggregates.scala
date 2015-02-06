@@ -115,11 +115,11 @@ abstract class UnaryAggregateExpression extends UnaryExpression with AggregateEx
 }
 
 case class Min(
-    child: Expression,
-    distinct: Boolean = false,
-    override val distinctLike: Boolean = true)
+    child: Expression)
   extends UnaryAggregateExpression {
 
+  override def distinct: Boolean = false
+  override def distinctLike: Boolean = true
   override def dataType = child.dataType
   override def bufferDataType: Seq[DataType] = dataType :: Nil
   override def toString = s"MIN($child)"
@@ -244,8 +244,11 @@ case class Average(child: Expression, distinct: Boolean = false)
   override def terminate(row: Row): Any = if (count.eval(row) == 0) null else divide.eval(row)
 }
 
-case class Max(child: Expression, distinct: Boolean = false)
+case class Max(child: Expression)
   extends UnaryAggregateExpression {
+  override def distinct: Boolean = false
+  override def distinctLike: Boolean = true
+
   override def nullable = true
   override def dataType = child.dataType
   override def bufferDataType: Seq[DataType] = dataType :: Nil

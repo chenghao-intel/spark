@@ -1051,8 +1051,8 @@ https://cwiki.apache.org/confluence/display/Hive/Enhanced+Aggregation%2C+Cube%2C
     case Token("TOK_FUNCTIONDI", Token(COUNT(), Nil) :: args) =>
       CountDistinct(args.map(nodeToExpr))
     case Token("TOK_FUNCTIONDI", Token(SUM(), Nil) :: arg :: Nil) => Sum(nodeToExpr(arg), true)
-    case Token("TOK_FUNCTIONDI", Token(MAX(), Nil) :: arg :: Nil) => Max(nodeToExpr(arg), true)
-    case Token("TOK_FUNCTIONDI", Token(MIN(), Nil) :: arg :: Nil) => Min(nodeToExpr(arg), true)
+    case Token("TOK_FUNCTIONDI", Token(MAX(), Nil) :: arg :: Nil) => Max(nodeToExpr(arg))
+    case Token("TOK_FUNCTIONDI", Token(MIN(), Nil) :: arg :: Nil) => Min(nodeToExpr(arg))
 
     /* System functions about string operations */
     case Token("TOK_FUNCTION", Token(UPPER(), Nil) :: arg :: Nil) => Upper(nodeToExpr(arg))

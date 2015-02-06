@@ -153,7 +153,7 @@ case class GeneratedAggregate(
           result
         )
 
-      case m @ Max(expr, distinct) =>
+      case m @ Max(expr) =>
         val currentMax = AttributeReference("currentMax", expr.dataType, nullable = true)()
         val initialValue = Literal(null, expr.dataType)
         val updateMax = MaxOf(currentMax, expr)
