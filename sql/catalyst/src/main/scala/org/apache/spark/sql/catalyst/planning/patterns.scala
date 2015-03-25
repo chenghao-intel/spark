@@ -182,6 +182,50 @@ object PartialAggregation {
   }
 }
 
+case class JoinFilter(joinType: JoinType, filter: Expression)
+
+/**
+ *
+ */
+object ExtractEquiJoinKeysForMultiwayJoin extends Logging with PredicateHelper {
+  /** (join keys, join filters, multiple joins) */
+  type ReturnType = (Seq[Seq[Expression]], Seq[JoinFilter], Seq[LogicalPlan])
+
+  // TODO Cost-Based-Optimization
+  def unapply(plan: LogicalPlan): Option[ReturnType] = plan match {
+    case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left: Join, right: Join) =>
+      // bushy join
+      None
+    case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left: Join, right) =>
+      // left deep join
+      left match {
+        case ExtractEquiJoinKeysForMultiwayJoin(joinKeys, joinFilters, children)
+          if joinKeys.contains(leftKeys)=> // TODO contains method is not right
+
+          Some(leftKeys +: joinKeys, JoinFilter(joinType, condition.getOrElse(Literal(true))) +: joinFilters, left +: children)
+        case _ =>
+          Some(
+            (leftKeys :: rightKeys :: Nil,
+            Seq(JoinFilter(joinType, condition.getOrElse(Literal(true)))),
+            left :: right :: Nil))
+      }
+    case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, condition, left, right: Join) =>
+      // right deep join
+      right match {
+        case ExtractEquiJoinKeysForMultiwayJoin(joinKeys, joinFilters, children)
+          if joinKeys.contains(rightKeys)=> // TODO contains method is not right
+
+          Some(joinKeys :+ rightKeys, joinFilters :+ JoinFilter(joinType, condition.getOrElse(Literal(true))), children :+ right)
+        case _ =>
+          Some(
+            (leftKeys :: rightKeys :: Nil,
+              Seq(JoinFilter(joinType, condition.getOrElse(Literal(true)))),
+              left :: right :: Nil))
+      }
+
+    case _ => None
+  }
+}
 
 /**
  * A pattern that finds joins with equality conditions that can be evaluated using equi-join.

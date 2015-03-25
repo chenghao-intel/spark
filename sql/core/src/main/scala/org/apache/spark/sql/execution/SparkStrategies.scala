@@ -34,6 +34,10 @@ private[sql] abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
 
   object LeftSemiJoin extends Strategy with PredicateHelper {
     def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
+      case ExtractEquiJoinKeysForMultiwayJoin(joinKeys, joinFilters, children)
+        if sqlContext.conf.multiwayJoin =>
+
+
       case ExtractEquiJoinKeys(LeftSemi, leftKeys, rightKeys, condition, left, right)
         if sqlContext.conf.autoBroadcastJoinThreshold > 0 &&
           right.statistics.sizeInBytes <= sqlContext.conf.autoBroadcastJoinThreshold =>
