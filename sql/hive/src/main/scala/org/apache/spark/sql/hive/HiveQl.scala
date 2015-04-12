@@ -645,13 +645,15 @@ https://cwiki.apache.org/confluence/display/Hive/Enhanced+Aggregation%2C+Cube%2C
                        subquery ::
                        expr :: Nil) :: Nil) =>
               InSubquery(
-                SubqueryConjunction(relations, key = Some(nodeToExpr(expr))), nodeToPlan(subquery), false)
+                SubqueryConjunction(
+                  relations, key = Some(nodeToExpr(expr))), nodeToPlan(subquery), false)
             case Token("TOK_SUBQUERY_EXPR",
                    Token("TOK_SUBQUERY_OP", Token(IN(), Nil) :: Nil) ::
                    subquery ::
                    expr :: Nil) =>
               InSubquery(
-                SubqueryConjunction(relations, key = Some(nodeToExpr(expr))), nodeToPlan(subquery), true)
+                SubqueryConjunction(
+                  relations, key = Some(nodeToExpr(expr))), nodeToPlan(subquery), true)
             case whereExpr =>
               Filter(nodeToExpr(whereExpr), relations)
           }
