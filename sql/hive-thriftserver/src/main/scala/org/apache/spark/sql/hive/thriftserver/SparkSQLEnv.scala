@@ -33,7 +33,11 @@ private[hive] object SparkSQLEnv extends Logging {
   var hiveContext: HiveContext = _
   var sparkContext: SparkContext = _
 
-  def init() {
+  /**
+   * Initialize the SparkSQLEnv
+   * @param properties the configuration from the "--hiveconf" of the command line.
+   */
+  def init(properties: java.util.Properties) {
     if (hiveContext == null) {
       val sparkConf = new SparkConf(loadDefaults = true)
       val maybeSerializer = sparkConf.getOption("spark.serializer")
@@ -51,6 +55,14 @@ private[hive] object SparkSQLEnv extends Logging {
       sparkContext = new SparkContext(sparkConf)
       sparkContext.addSparkListener(new StatsReportListener())
       hiveContext = new HiveContext(sparkContext)
+
+      if (properties != null) {
+        properties.entrySet().foreach { item =>
+          val key = item.getKey.asInstanceOf[String]
+          val value = item.getValue.asInstanceOf[String]
+          hiveContext.configure += ((key, value))
+        }
+      }
 
       hiveContext.metadataHive.setOut(new PrintStream(System.out, true, "UTF-8"))
       hiveContext.metadataHive.setInfo(new PrintStream(System.err, true, "UTF-8"))

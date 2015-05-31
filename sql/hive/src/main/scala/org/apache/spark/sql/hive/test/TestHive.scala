@@ -20,16 +20,15 @@ package org.apache.spark.sql.hive.test
 import java.io.File
 import java.util.{Set => JavaSet}
 
+import scala.collection.mutable.HashMap
+
 import org.apache.hadoop.hive.conf.HiveConf
 import org.apache.hadoop.hive.ql.exec.FunctionRegistry
 import org.apache.hadoop.hive.ql.io.avro.{AvroContainerInputFormat, AvroContainerOutputFormat}
-import org.apache.hadoop.hive.ql.metadata.Table
-import org.apache.hadoop.hive.ql.parse.VariableSubstitution
 import org.apache.hadoop.hive.ql.processors._
 import org.apache.hadoop.hive.serde2.`lazy`.LazySimpleSerDe
 import org.apache.hadoop.hive.serde2.avro.AvroSerDe
 
-import org.apache.spark.sql.catalyst.CatalystConf
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.CacheTableCommand
@@ -40,6 +39,7 @@ import org.apache.spark.util.Utils
 import org.apache.spark.{SparkConf, SparkContext}
 
 import scala.collection.mutable
+import scala.collection.mutable.HashMap
 import scala.language.implicitConversions
 
 /* Implicit conversions */
@@ -71,20 +71,37 @@ object TestHive
 class TestHiveContext(sc: SparkContext) extends HiveContext(sc) {
   self =>
 
-  import HiveContext._
-
   // By clearing the port we force Spark to pick a new one.  This allows us to rerun tests
   // without restarting the JVM.
   System.clearProperty("spark.hostPort")
   CommandProcessorFactory.clean(hiveconf)
+
+  /** Constructs a configuration for hive, where the metastore is located in a temp directory. */
+  private def newTemporaryConfiguration(): HashMap[String, String] = {
+    val tempDir = Utils.createTempDir()
+    val localMetastore = new File(tempDir, "metastore").getAbsolutePath
+    val propMap: HashMap[String, String] = new HashMap()
+    // We have to mask all properties in hive-site.xml that relates to metastore data source
+    // as we used a local metastore here.
+    HiveConf.ConfVars.values().foreach { confvar  =>
+      if (confvar.varname.contains("datanucleus") || confvar.varname.contains("jdo")) {
+        propMap.put(confvar.varname, confvar.defaultVal)
+      }
+    }
+    propMap.put("javax.jdo.option.ConnectionURL",
+      s"jdbc:derby:;databaseName=$localMetastore;create=true")
+    propMap.put("datanucleus.rdbms.datastoreAdapterClassName",
+      "org.datanucleus.store.rdbms.adapter.DerbyAdapter")
+    propMap
+  }
 
   hiveconf.set("hive.plan.serialization.format", "javaXML")
 
   lazy val warehousePath = Utils.createTempDir()
 
   /** Sets up the system initially or after a RESET command */
-  protected override def configure(): Map[String, String] =
-   newTemporaryConfiguration() ++ Map("hive.metastore.warehouse.dir" -> warehousePath.toString)
+  protected[hive] override lazy val configure: HashMap[String, String] =
+    newTemporaryConfiguration() += (("hive.metastore.warehouse.dir", warehousePath.toString))
 
   val testTempDir = Utils.createTempDir()
 
@@ -417,7 +434,6 @@ class TestHiveContext(sc: SparkContext) extends HiveContext(sc) {
       hiveconf.set("fs.default.name", new File(".").toURI.toString)
       // It is important that we RESET first as broken hooks that might have been set could break
       // other sql exec here.
-      executionHive.runSqlHive("RESET")
       metadataHive.runSqlHive("RESET")
       // For some reason, RESET does not reset the following variables...
       // https://issues.apache.org/jira/browse/HIVE-9004
@@ -427,7 +443,7 @@ class TestHiveContext(sc: SparkContext) extends HiveContext(sc) {
       // Lots of tests fail if we do not change the partition whitelist from the default.
       runSqlHive("set hive.metastore.partition.name.whitelist.pattern=.*")
 
-      configure().foreach {
+      configure.foreach {
         case (k, v) =>
           metadataHive.runSqlHive(s"SET $k=$v")
       }

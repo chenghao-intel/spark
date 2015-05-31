@@ -19,6 +19,8 @@ package org.apache.spark.sql.hive.thriftserver
 
 import java.io._
 
+import org.apache.spark.sql.hive.HiveContext
+
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Promise}
@@ -152,7 +154,7 @@ class CliSuite extends FunSuite with BeforeAndAfter with Logging {
     )
   }
 
-  test("Single command with --jars") {
+  test("Single command with --jars (built-in version of hive metastore)") {
     val jarFile =
       Thread.currentThread().getContextClassLoader
         .getResource("data/files/hive-hcatalog-core-0.13.1.jar")
@@ -166,5 +168,61 @@ class CliSuite extends FunSuite with BeforeAndAfter with Logging {
       ""
         -> "OK"
     )
+  }
+
+  test("Single command with --jars (hive metastore version 0.12)") {
+    val jarFile =
+      Thread.currentThread().getContextClassLoader
+        .getResource("data/files/hive-hcatalog-core-0.13.1.jar")
+    runCliWithin(1.minute,
+      Seq(
+        "--jars",
+        s"$jarFile",
+        s"--hiveconf ${HiveContext.HIVE_METASTORE_VERSION}",
+        "0.12.0",
+        "-e",
+        """CREATE TABLE t1(a string, b string) ROW FORMAT
+          | SERDE 'org.apache.hive.hcatalog.data.JsonSerDe';""".stripMargin))(
+        ""
+          -> "OK"
+      )
+  }
+
+  test("Single command with --jars (hive metastore version 0.13.1)") {
+    val jarFile =
+      Thread.currentThread().getContextClassLoader
+        .getResource("data/files/hive-hcatalog-core-0.13.1.jar")
+    runCliWithin(1.minute,
+      Seq(
+        "--jars",
+        s"$jarFile",
+        s"--hiveconf ${HiveContext.HIVE_METASTORE_VERSION}",
+        "0.13.1",
+    "-e",
+    """CREATE TABLE t1(a string, b string) ROW FORMAT
+      | SERDE 'org.apache.hive.hcatalog.data.JsonSerDe';""".stripMargin))(
+      ""
+        -> "OK"
+      )
+  }
+
+  test("Single command with --jars (hive metastore version maven)") {
+    val jarFile =
+      Thread.currentThread().getContextClassLoader
+        .getResource("data/files/hive-hcatalog-core-0.13.1.jar")
+    runCliWithin(5.minute,
+      Seq(
+        "--jars",
+        s"$jarFile",
+        s"--hiveconf ${HiveContext.HIVE_METASTORE_JARS}",
+        "maven",
+        s"--hiveconf ${HiveContext.HIVE_METASTORE_VERSION}",
+        "0.12.0",
+        "-e",
+        """CREATE TABLE t1(a string, b string) ROW FORMAT
+          | SERDE 'org.apache.hive.hcatalog.data.JsonSerDe';""".stripMargin))(
+        ""
+          -> "OK"
+      )
   }
 }

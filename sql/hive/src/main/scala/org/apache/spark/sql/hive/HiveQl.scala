@@ -257,7 +257,7 @@ private[hive] object HiveQl {
    * Returns the HiveConf
    */
   private[this] def hiveConf(): HiveConf = {
-    val ss = SessionState.get() // SessionState is lazy initializaion, it can be null here
+    val ss = SessionState.get() // SessionState is lazy initialization, it can be null here
     if (ss == null) {
       new HiveConf()
     } else {

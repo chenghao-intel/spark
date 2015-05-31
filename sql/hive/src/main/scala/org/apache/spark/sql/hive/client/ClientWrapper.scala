@@ -21,6 +21,8 @@ import java.io.{BufferedReader, InputStreamReader, File, PrintStream}
 import java.net.URI
 import java.util.{ArrayList => JArrayList, Map => JMap, List => JList, Set => JSet}
 
+import org.apache.spark.sql.hive.HiveContext
+
 import scala.collection.JavaConversions._
 import scala.language.reflectiveCalls
 
@@ -28,7 +30,6 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hive.metastore.api.Database
 import org.apache.hadoop.hive.conf.HiveConf
 import org.apache.hadoop.hive.metastore.TableType
-import org.apache.hadoop.hive.metastore.api
 import org.apache.hadoop.hive.metastore.api.FieldSchema
 import org.apache.hadoop.hive.ql.metadata
 import org.apache.hadoop.hive.ql.metadata.Hive
@@ -52,71 +53,20 @@ import org.apache.spark.sql.execution.QueryExecutionException
  * must use reflection after matching on `version`.
  *
  * @param version the version of hive used when pick function calls that are not compatible.
- * @param config  a collection of configuration options that will be added to the hive conf before
- *                opening the hive client.
  */
 private[hive] class ClientWrapper(
     version: HiveVersion,
-    config: Map[String, String])
+    hiveContext: HiveContext)
   extends ClientInterface
   with Logging
   with ReflectionMagic {
 
-  // Circular buffer to hold what hive prints to STDOUT and ERR.  Only printed when failures occur.
-  private val outputBuffer = new java.io.OutputStream {
-    var pos: Int = 0
-    var buffer = new Array[Int](10240)
-    def write(i: Int): Unit = {
-      buffer(pos) = i
-      pos = (pos + 1) % buffer.size
-    }
-
-    override def toString: String = {
-      val (end, start) = buffer.splitAt(pos)
-      val input = new java.io.InputStream {
-        val iterator = (start ++ end).iterator
-
-        def read(): Int = if (iterator.hasNext) iterator.next() else -1
-      }
-      val reader = new BufferedReader(new InputStreamReader(input))
-      val stringBuilder = new StringBuilder
-      var line = reader.readLine()
-      while(line != null) {
-        stringBuilder.append(line)
-        stringBuilder.append("\n")
-        line = reader.readLine()
-      }
-      stringBuilder.toString()
-    }
-  }
-
-  val state = {
-    val original = Thread.currentThread().getContextClassLoader
-    Thread.currentThread().setContextClassLoader(getClass.getClassLoader)
-    val ret = try {
-      val oldState = SessionState.get()
-      if (oldState == null) {
-        val initialConf = new HiveConf(classOf[SessionState])
-        config.foreach { case (k, v) =>
-          logDebug(s"Hive Config: $k=$v")
-          initialConf.set(k, v)
-        }
-        val newState = new SessionState(initialConf)
-        SessionState.start(newState)
-        newState.out = new PrintStream(outputBuffer, true, "UTF-8")
-        newState.err = new PrintStream(outputBuffer, true, "UTF-8")
-        newState
-      } else {
-        oldState
-      }
-    } finally {
-      Thread.currentThread().setContextClassLoader(original)
-    }
-    ret
+  def state: SessionState = {
+    hiveContext.currentSession().asInstanceOf[hiveContext.SQLSession].sessionState
   }
 
   /** Returns the configuration for the current session. */
-  def conf: HiveConf = SessionState.get().getConf
+  def conf: HiveConf = state.getConf
 
   // TODO: should be a def?s
   private val client = Hive.get(conf)
@@ -140,18 +90,6 @@ private[hive] class ClientWrapper(
       Thread.currentThread().setContextClassLoader(original)
     }
     ret
-  }
-
-  def setOut(stream: PrintStream): Unit = withHiveState {
-    state.out = stream
-  }
-
-  def setInfo(stream: PrintStream): Unit = withHiveState {
-    state.info = stream
-  }
-
-  def setError(stream: PrintStream): Unit = withHiveState {
-    state.err = stream
   }
 
   override def currentDatabase: String = withHiveState {
@@ -365,7 +303,7 @@ private[hive] class ClientWrapper(
             |======================
             |HIVE FAILURE OUTPUT
             |======================
-            |${outputBuffer.toString}
+            |${hiveContext.currentSession().asInstanceOf[hiveContext.SQLSession].outputBuffer.toString}
             |======================
             |END HIVE FAILURE OUTPUT
             |======================

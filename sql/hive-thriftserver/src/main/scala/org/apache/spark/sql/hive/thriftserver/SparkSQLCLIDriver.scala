@@ -74,12 +74,7 @@ private[hive] object SparkSQLCLIDriver {
       System.exit(1)
     }
 
-    val cliConf = new HiveConf(classOf[SessionState])
-    // Override the location of the metastore since this is only used for local execution.
-    HiveContext.newTemporaryConfiguration().foreach {
-      case (key, value) => cliConf.set(key, value)
-    }
-    val sessionState = new CliSessionState(cliConf)
+    val sessionState = new CliSessionState(new HiveConf(classOf[SessionState]))
 
     sessionState.in = System.in
     try {
@@ -94,16 +89,19 @@ private[hive] object SparkSQLCLIDriver {
       System.exit(2)
     }
 
+    // Force initializing SparkSQLEnv. This is put here but not object SparkSQLCliDriver
+    // because the Hive unit tests do not go through the main() code path.
+    if (!sessionState.isRemoteMode) {
+      SparkSQLEnv.init(sessionState.cmdProperties)
+    }
+
     // Set all properties specified via command line.
     val conf: HiveConf = sessionState.getConf
     sessionState.cmdProperties.entrySet().foreach { item =>
       val key = item.getKey.asInstanceOf[String]
       val value = item.getValue.asInstanceOf[String]
-      // We do not propagate metastore options to the execution copy of hive.
-      if (key != "javax.jdo.option.ConnectionURL") {
-        conf.set(key, value)
-        sessionState.getOverriddenConfigurations.put(key, value)
-      }
+      conf.set(key, value)
+      sessionState.getOverriddenConfigurations.put(key, value)
     }
 
     SessionState.start(sessionState)
@@ -241,12 +239,6 @@ private[hive] class SparkSQLCLIDriver extends CliDriver with Logging {
 
   private val conf: Configuration =
     if (sessionState != null) sessionState.getConf else new Configuration()
-
-  // Force initializing SparkSQLEnv. This is put here but not object SparkSQLCliDriver
-  // because the Hive unit tests do not go through the main() code path.
-  if (!sessionState.isRemoteMode) {
-    SparkSQLEnv.init()
-  }
 
   override def processCmd(cmd: String): Int = {
     val cmd_trimmed: String = cmd.trim()
