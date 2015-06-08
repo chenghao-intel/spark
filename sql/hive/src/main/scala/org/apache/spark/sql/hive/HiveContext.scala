@@ -25,6 +25,8 @@ import java.util.{ArrayList => JArrayList}
 import org.apache.hadoop.hive.ql.parse.VariableSubstitution
 import org.apache.spark.sql.catalyst.ParserDialect
 
+import org.apache.spark.sql.catalyst.planning.AggregateExpressionSubsitution
+
 import scala.collection.JavaConversions._
 import scala.collection.mutable.{ArrayBuffer, HashMap}
 import scala.language.implicitConversions
@@ -442,6 +444,7 @@ class HiveContext(sc: SparkContext) extends SQLContext(sc) {
     val hiveContext = self
 
     override def strategies: Seq[Strategy] = experimental.extraStrategies ++ Seq(
+      new HashAggregation2(HiveAggregateExpressionSubsitution),
       DataSourceStrategy,
       HiveCommandStrategy(self),
       HiveDDLStrategy,
