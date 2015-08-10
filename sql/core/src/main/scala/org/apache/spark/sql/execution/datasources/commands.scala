@@ -151,6 +151,9 @@ private[sql] case class InsertIntoHadoopFsRelation(
       }
     }
 
+    // Invalidate the cache.
+    sqlContext.cacheManager.invalidateCache(LogicalRelation(relation))
+
     Seq.empty[Row]
   }
 

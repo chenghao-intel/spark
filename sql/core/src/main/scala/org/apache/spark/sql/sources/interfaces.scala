@@ -17,6 +17,9 @@
 
 package org.apache.spark.sql.sources
 
+import org.apache.hadoop.mapred.{InputFormat}
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
+
 import scala.collection.mutable
 import scala.util.Try
 
@@ -24,10 +27,10 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.mapreduce.{Job, TaskAttemptContext}
 
-import org.apache.spark.{Logging, SparkContext}
+import org.apache.spark.{Partition => RDDPartition, Logging, SparkContext}
 import org.apache.spark.annotation.{DeveloperApi, Experimental}
 import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.rdd.RDD
+import org.apache.spark.rdd.{HadoopRDD, RDD}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateMutableProjection
@@ -36,6 +39,43 @@ import org.apache.spark.sql.execution.datasources.{PartitioningUtils, PartitionS
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql._
 import org.apache.spark.util.SerializableConfiguration
+
+
+/**
+ * ::DeveloperApi::
+ *
+ * An RDD that used by `HadoopFsRelation` based relation for reading data stored in Hadoop
+ * (e.g., files in HDFS, sources in HBase, or S3)
+ *
+ * Not like the `HadoopRDD`, this RDD will auto refresh the HadoopFsRelation, and get latest
+ * files as its inputs.
+ *
+ * @since 1.5.0
+ */
+@DeveloperApi
+class HadoopFsRelationRDD[K, V](
+    @transient relation: HadoopFsRelation,
+    @transient sc: SparkContext,
+    job: Job,
+    inputFormatClass: Class[_ <: InputFormat[K, V]],
+    keyClass: Class[K],
+    valueClass: Class[V])
+  extends HadoopRDD(
+    sc,
+    sc.broadcast(new SerializableConfiguration(job.getConfiguration)),
+    None /* initLocalJobConfFuncOpt */,
+    inputFormatClass,
+    keyClass,
+    valueClass,
+    sc.defaultMinPartitions) with Logging {
+
+  override def getPartitions: Array[RDDPartition] = {
+    relation.refresh()
+    FileInputFormat.setInputPaths(job, relation.inputStatuses(relation.paths).map(_.getPath): _*)
+
+    super.getPartitions
+  }
+}
 
 /**
  * ::DeveloperApi::
@@ -535,12 +575,8 @@ abstract class HadoopFsRelation private[sql](maybePartitionSpec: Option[Partitio
     })
   }
 
-  private[sql] final def buildScan(
-      requiredColumns: Array[String],
-      filters: Array[Filter],
-      inputPaths: Array[String],
-      broadcastedConf: Broadcast[SerializableConfiguration]): RDD[Row] = {
-    val inputStatuses = inputPaths.flatMap { input =>
+  private[sql] final def inputStatuses(inputPaths: Array[String]): Array[FileStatus] = {
+    inputPaths.flatMap { input =>
       val path = new Path(input)
 
       // First assumes `input` is a directory path, and tries to get all files contained in it.
@@ -553,8 +589,15 @@ abstract class HadoopFsRelation private[sql](maybePartitionSpec: Option[Partitio
         !name.startsWith("_") && !name.startsWith(".")
       }
     }
+  }
 
-    buildScan(requiredColumns, filters, inputStatuses, broadcastedConf)
+  private[sql] final def buildScan(
+      requiredColumns: Array[String],
+      filters: Array[Filter],
+      inputPaths: Array[String],
+      broadcastedConf: Broadcast[SerializableConfiguration]): RDD[Row] = {
+
+    buildScan(requiredColumns, filters, inputStatuses(inputPaths), broadcastedConf)
   }
 
   /**

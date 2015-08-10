@@ -291,22 +291,13 @@ private[orc] case class OrcTableScan(
     // Sets requested columns
     addColumnIds(attributes, relation, conf)
 
-    if (inputPaths.isEmpty) {
-      // the input path probably be pruned, return an empty RDD.
-      return sqlContext.sparkContext.emptyRDD[InternalRow]
-    }
-    FileInputFormat.setInputPaths(job, inputPaths.map(_.getPath): _*)
-
     val inputFormatClass =
       classOf[OrcInputFormat]
         .asInstanceOf[Class[_ <: MapRedInputFormat[NullWritable, Writable]]]
 
-    val rdd = sqlContext.sparkContext.hadoopRDD(
-      conf.asInstanceOf[JobConf],
-      inputFormatClass,
-      classOf[NullWritable],
-      classOf[Writable]
-    ).asInstanceOf[HadoopRDD[NullWritable, Writable]]
+    val rdd = new HadoopFsRelationRDD(
+      relation, sqlContext.sparkContext, job,
+      inputFormatClass, classOf[NullWritable], classOf[Writable])
 
     val wrappedConf = new SerializableConfiguration(conf)
 

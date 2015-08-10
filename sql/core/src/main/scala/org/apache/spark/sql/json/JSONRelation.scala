@@ -72,21 +72,12 @@ private[sql] class JSONRelation(
 
   override val needConversion: Boolean = false
 
-  private def createBaseRdd(inputPaths: Array[FileStatus]): RDD[String] = {
+  private def createBaseRdd(): RDD[String] = {
     val job = new Job(sqlContext.sparkContext.hadoopConfiguration)
-    val conf = job.getConfiguration
 
-    val paths = inputPaths.map(_.getPath)
-
-    if (paths.nonEmpty) {
-      FileInputFormat.setInputPaths(job, paths: _*)
-    }
-
-    sqlContext.sparkContext.hadoopRDD(
-      conf.asInstanceOf[JobConf],
-      classOf[TextInputFormat],
-      classOf[LongWritable],
-      classOf[Text]).map(_._2.toString) // get the text line
+    new HadoopFsRelationRDD(
+      this, sqlContext.sparkContext, job,
+      classOf[TextInputFormat], classOf[LongWritable], classOf[Text]).map(_._2.toString) // get the text line
   }
 
   override lazy val dataSchema = {
@@ -110,7 +101,7 @@ private[sql] class JSONRelation(
       filters: Array[Filter],
       inputPaths: Array[FileStatus]): RDD[Row] = {
     JacksonParser(
-      inputRDD.getOrElse(createBaseRdd(inputPaths)),
+      inputRDD.getOrElse(createBaseRdd()),
       StructType(requiredColumns.map(dataSchema(_))),
       sqlContext.conf.columnNameOfCorruptRecord).asInstanceOf[RDD[Row]]
   }
