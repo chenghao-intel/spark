@@ -245,6 +245,9 @@ private[sql] class SQLConf extends Serializable with CatalystConf {
   private[spark] def broadcastTimeout: Int =
     getConf(BROADCAST_TIMEOUT, (5 * 60).toString).toInt
 
+  private[spark] def thresholdOfLimitClause: Long =
+    getConf("spark.sql.limit.rows", "100000").toLong
+
   private[spark] def defaultDataSourceName: String =
     getConf(DEFAULT_DATA_SOURCE_NAME, "org.apache.spark.sql.parquet")
 

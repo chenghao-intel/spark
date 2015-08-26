@@ -946,4 +946,18 @@ class SQLQuerySuite extends QueryTest {
 
     checkAnswer(sql("SELECT a.`c.b`, `b.$q`[0].`a@!.q`, `q.w`.`w.i&`[0] FROM t"), Row(1, 1, 1))
   }
+
+  test("SPARK-9879 OOM for order by limit a large number") {
+    (1 to 3000).map(i => (s"key_$i", i % 192)).toDF("k", "v").registerTempTable("order_by_limit")
+    val df1 = sql("select k from order_by_limit order by v asc, k desc limit 2015")
+
+    val expected1 = df1.collect()
+
+    val oldLimit: Long = TestHive.conf.thresholdOfLimitClause
+    TestHive.setConf("spark.sql.limit.rows", 1000.toString)
+    sql("create table limit_result as select k " +
+          "from order_by_limit order by v asc, k desc limit 2015")
+    checkAnswer(sql("select * from limit_result"), expected1)
+    TestHive.setConf("spark.sql.limit.rows", oldLimit.toString)
+  }
 }
