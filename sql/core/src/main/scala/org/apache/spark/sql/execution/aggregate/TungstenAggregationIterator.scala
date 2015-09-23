@@ -376,6 +376,7 @@ class TungstenAggregationIterator(
         if (buffer == null) {
           // buffer == null means that we could not allocate more memory.
           // Now, we need to spill the map and switch to sort-based aggregation.
+          logInfo(s"Switch to sort based aggregation after $numInputRows proceeded.")
           switchToSortBasedAggregation(groupingKey, newInput)
         } else {
           processRow(buffer, newInput)

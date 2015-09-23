@@ -124,6 +124,9 @@ class ShuffleMemoryManager protected (
   /** Release all memory for the current task and mark it as inactive (e.g. when a task ends). */
   def releaseMemoryForThisTask(): Unit = synchronized {
     val taskAttemptId = currentTaskAttemptId()
+    val leak = taskMemory.getOrElse(taskAttemptId, 0L)
+    assert(leak == 0L, s"Detected Memory Leak $leak bytes.")
+
     taskMemory.remove(taskAttemptId)
     notifyAll()  // Notify waiters who locked "this" in tryToAcquire that memory has been freed
   }

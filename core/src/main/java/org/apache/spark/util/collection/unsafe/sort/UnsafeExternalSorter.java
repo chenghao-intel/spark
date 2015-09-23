@@ -370,12 +370,15 @@ public final class UnsafeExternalSorter {
   private void acquireNewPage() throws IOException {
     final long memoryAcquired = shuffleMemoryManager.tryToAcquire(pageSizeBytes);
     if (memoryAcquired < pageSizeBytes) {
+      logger.warn("Try to acquire " + pageSizeBytes +
+              " bytes, but got " + memoryAcquired + " bytes");
       shuffleMemoryManager.release(memoryAcquired);
       spill();
       final long memoryAcquiredAfterSpilling = shuffleMemoryManager.tryToAcquire(pageSizeBytes);
       if (memoryAcquiredAfterSpilling != pageSizeBytes) {
         shuffleMemoryManager.release(memoryAcquiredAfterSpilling);
-        throw new IOException("Unable to acquire " + pageSizeBytes + " bytes of memory");
+        throw new IOException("Unable to acquire " + pageSizeBytes +
+                " bytes of memory, but got " + memoryAcquiredAfterSpilling + " bytes.");
       }
     }
     currentPage = taskMemoryManager.allocatePage(pageSizeBytes);
