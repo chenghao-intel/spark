@@ -32,14 +32,6 @@ private[hive] class HiveSharedState(override val sparkContext: SparkContext)
 
   // TODO: just share the IsolatedClientLoader instead of the client instance itself
 
-  {
-    // Set the Hive metastore warehouse path to the one we use
-    val tempConf = new SQLConf
-    sparkContext.conf.getAll.foreach { case (k, v) => tempConf.setConfString(k, v) }
-    sparkContext.conf.set("hive.metastore.warehouse.dir", tempConf.warehousePath)
-    logInfo(s"Setting Hive metastore warehouse path to '${tempConf.warehousePath}'")
-  }
-
   /**
    * A Hive client used to interact with the metastore.
    */

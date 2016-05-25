@@ -166,6 +166,9 @@ private[hive] class HiveClientImpl(
         if (clientLoader.cachedHive != null) {
           Hive.set(clientLoader.cachedHive.asInstanceOf[Hive])
         }
+        val hiveWH = hiveConf.getAllProperties.getProperty("hive.metastore.warehouse.dir")
+        // we take the higher priority in hive-site.xml for hive warehouse
+        sparkConf.set("spark.sql.warehouse.dir", hiveWH)
         SessionState.start(state)
         state.out = new PrintStream(outputBuffer, true, "UTF-8")
         state.err = new PrintStream(outputBuffer, true, "UTF-8")
